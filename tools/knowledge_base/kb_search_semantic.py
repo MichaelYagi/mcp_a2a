@@ -3,7 +3,8 @@ import math
 from pathlib import Path
 from collections import Counter, defaultdict
 
-KB_DIR = Path("knowledge/entries")
+SCRIPT_DIR = Path(__file__).resolve().parent
+KB_DIR = SCRIPT_DIR / "entries"
 
 def tokenize(text):
     return [w.lower() for w in text.split()]

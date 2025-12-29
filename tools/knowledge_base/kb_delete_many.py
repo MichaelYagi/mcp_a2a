@@ -1,6 +1,7 @@
 from pathlib import Path
 
-KB_DIR = Path("knowledge/entries")
+SCRIPT_DIR = Path(__file__).resolve().parent
+KB_DIR = SCRIPT_DIR / "entries"
 
 def kb_delete_many(entry_ids):
     deleted = []

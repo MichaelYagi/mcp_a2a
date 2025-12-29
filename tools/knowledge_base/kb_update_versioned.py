@@ -3,8 +3,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-KB_DIR = Path("knowledge/entries")
-VER_DIR = Path("knowledge/versions")
+SCRIPT_DIR = Path(__file__).resolve().parent
+KB_DIR = SCRIPT_DIR / "entries"
+VER_DIR = SCRIPT_DIR / "versions"
 
 def kb_update_versioned(entry_id, title=None, content=None, tags=None):
     file = KB_DIR / f"{entry_id}.json"

@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-KB_DIR = Path("knowledge/entries")
+SCRIPT_DIR = Path(__file__).resolve().parent
+KB_DIR = SCRIPT_DIR / "entries"
 
 def kb_get(entry_id):
     file = KB_DIR / f"{entry_id}.json"
