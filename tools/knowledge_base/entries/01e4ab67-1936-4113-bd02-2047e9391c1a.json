@@ -1,0 +1,10 @@
+{
+  "id": "01e4ab67-1936-4113-bd02-2047e9391c1a",
+  "title": "Knowledge Base Storage Location",
+  "content": "The knowledge base files are stored in mcp_server/tools/knowledge_base/entries",
+  "tags": [
+    "storage",
+    "file-location",
+    "configuration"
+  ]
+}

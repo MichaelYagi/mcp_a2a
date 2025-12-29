@@ -1,7 +1,5 @@
-import sys
-import io
 import json
-from typing import List, Dict, Any
+from typing import List
 from mcp.server.fastmcp import FastMCP
 
 # ─────────────────────────────────────────────
