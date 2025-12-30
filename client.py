@@ -36,8 +36,8 @@ async def main():
         query = input("\n> ")
         if not query.strip():
             continue
-        # Run agent
-        result = await agent.run(query, server_name="local")
+        # Run agent — DO NOT pass server_name
+        result = await agent.run(query)
         print("\n" + result)
 
 if __name__ == "__main__":

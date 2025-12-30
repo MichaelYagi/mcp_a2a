@@ -109,7 +109,7 @@ python client.py
 
 ### Configuration for Claude Desktop
 
-Update your configuration at `%APPDATA%\Claude\claude_desktop_config.json` for Windows. Ensure you use **absolute paths** and the specific environment flags for Windows stability.
+Update your configuration at `%APPDATA%\Roaming\Claude\claude_desktop_config.json` for Windows. Ensure you use **absolute paths** and the specific environment flags for Windows stability.
 
 ```json
 { 
