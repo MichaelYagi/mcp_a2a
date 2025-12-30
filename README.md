@@ -89,6 +89,8 @@ pip install psutil
 
 ### Configuration for client.py
 
+Get OpenAI API key from https://console.groq.com/ (free)
+
 ```macOS / Linux
 export OPENAI_API_KEY="gsk_XXXXXXXX"
 export OPENAI_BASE_URL="https://api.groq.com/openai/v1"
