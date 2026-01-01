@@ -255,16 +255,16 @@ def debug_fix(
 # Location Tools
 # ─────────────────────────────────────────────
 @mcp.tool()
-def get_location_tool(city: str | None = None, country: str | None = None) -> str:
-    return json.dumps(get_location_fn(city, country), indent=2)
+def get_location_tool(city: str | None = None, state: str | None = None, country: str | None = None) -> str:
+    return json.dumps(get_location_fn(city, state, country), indent=2)
 
 @mcp.tool()
-def get_time_tool(city: str | None = None, country: str | None = None) -> str:
-    return json.dumps(get_time_fn(city, country), indent=2)
+def get_time_tool(city: str | None = None, state: str | None = None, country: str | None = None) -> str:
+    return json.dumps(get_time_fn(city, state, country), indent=2)
 
 @mcp.tool()
-def get_weather_tool(city: str | None = None, country: str | None = None) -> str:
-    return json.dumps(get_weather_fn(city, country), indent=2)
+def get_weather_tool(city: str | None = None, state: str | None = None, country: str | None = None) -> str:
+    return json.dumps(get_weather_fn(city, state, country), indent=2)
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

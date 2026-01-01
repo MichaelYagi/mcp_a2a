@@ -112,6 +112,98 @@ CITY_TIMEZONES = {
     ("Wellington", "New Zealand"): "Pacific/Auckland",
 }
 
+STATE_TIMEZONES = {
+    # Canada (Provinces & Territories)
+    ("British Columbia", "Canada"): "America/Vancouver",
+    ("Alberta", "Canada"): "America/Edmonton",
+    ("Saskatchewan", "Canada"): "America/Regina",
+    ("Manitoba", "Canada"): "America/Winnipeg",
+    ("Ontario", "Canada"): "America/Toronto",
+    ("Quebec", "Canada"): "America/Toronto",
+    ("New Brunswick", "Canada"): "America/Moncton",
+    ("Nova Scotia", "Canada"): "America/Halifax",
+    ("Prince Edward Island", "Canada"): "America/Halifax",
+    ("Newfoundland and Labrador", "Canada"): "America/St_Johns",
+    ("Yukon", "Canada"): "America/Whitehorse",
+    ("Northwest Territories", "Canada"): "America/Yellowknife",
+    ("Nunavut", "Canada"): "America/Iqaluit",
+
+    # USA (States)
+    ("New York", "USA"): "America/New_York",
+    ("Massachusetts", "USA"): "America/New_York",
+    ("Florida", "USA"): "America/New_York",
+    ("District of Columbia", "USA"): "America/New_York",
+    ("Illinois", "USA"): "America/Chicago",
+    ("Texas", "USA"): "America/Chicago",
+    ("Colorado", "USA"): "America/Denver",
+    ("Arizona", "USA"): "America/Phoenix",
+    ("California", "USA"): "America/Los_Angeles",
+    ("Washington", "USA"): "America/Los_Angeles",
+    ("Oregon", "USA"): "America/Los_Angeles",
+
+    # UK (Countries)
+    ("England", "UK"): "Europe/London",
+    ("Scotland", "UK"): "Europe/London",
+    ("Wales", "UK"): "Europe/London",
+    ("Northern Ireland", "UK"): "Europe/London",
+
+    # Australia (States & Territories)
+    ("New South Wales", "Australia"): "Australia/Sydney",
+    ("Victoria", "Australia"): "Australia/Melbourne",
+    ("Queensland", "Australia"): "Australia/Brisbane",
+    ("Western Australia", "Australia"): "Australia/Perth",
+    ("South Australia", "Australia"): "Australia/Adelaide",
+    ("Tasmania", "Australia"): "Australia/Hobart",
+    ("Northern Territory", "Australia"): "Australia/Darwin",
+    ("Australian Capital Territory", "Australia"): "Australia/Sydney",
+
+    # India (States share one timezone)
+    ("Maharashtra", "India"): "Asia/Kolkata",
+    ("Karnataka", "India"): "Asia/Kolkata",
+    ("Delhi", "India"): "Asia/Kolkata",
+    ("Tamil Nadu", "India"): "Asia/Kolkata",
+    ("West Bengal", "India"): "Asia/Kolkata",
+
+    # Japan (Prefectures share one timezone)
+    ("Tokyo", "Japan"): "Asia/Tokyo",
+    ("Kanagawa", "Japan"): "Asia/Tokyo",
+    ("Osaka", "Japan"): "Asia/Tokyo",
+    ("Hokkaido", "Japan"): "Asia/Tokyo",
+    ("Aichi", "Japan"): "Asia/Tokyo",
+    ("Fukuoka", "Japan"): "Asia/Tokyo",
+
+    # China (Provinces share one timezone)
+    ("Guangdong", "China"): "Asia/Shanghai",
+    ("Beijing", "China"): "Asia/Shanghai",
+    ("Shanghai", "China"): "Asia/Shanghai",
+    ("Zhejiang", "China"): "Asia/Shanghai",
+    ("Jiangsu", "China"): "Asia/Shanghai",
+
+    # Middle East (Regions share country timezone)
+    ("Dubai", "UAE"): "Asia/Dubai",
+    ("Abu Dhabi", "UAE"): "Asia/Dubai",
+    ("Riyadh Province", "Saudi Arabia"): "Asia/Riyadh",
+    ("Doha Municipality", "Qatar"): "Asia/Qatar",
+    ("Kuwait", "Kuwait"): "Asia/Kuwait",
+    ("Jerusalem District", "Israel"): "Asia/Jerusalem",
+
+    # Africa (Regions share country timezone)
+    ("Gauteng", "South Africa"): "Africa/Johannesburg",
+    ("Western Cape", "South Africa"): "Africa/Johannesburg",
+    ("Cairo Governorate", "Egypt"): "Africa/Cairo",
+    ("Lagos State", "Nigeria"): "Africa/Lagos",
+    ("Nairobi County", "Kenya"): "Africa/Nairobi",
+    ("Casablanca-Settat", "Morocco"): "Africa/Casablanca",
+
+    # Southeast Asia (Regions share country timezone)
+    ("Bangkok", "Thailand"): "Asia/Bangkok",
+    ("Ho Chi Minh", "Vietnam"): "Asia/Ho_Chi_Minh",
+    ("Hanoi", "Vietnam"): "Asia/Bangkok",
+    ("Metro Manila", "Philippines"): "Asia/Manila",
+    ("Jakarta", "Indonesia"): "Asia/Jakarta",
+    ("Kuala Lumpur", "Malaysia"): "Asia/Kuala_Lumpur",
+}
+
 COUNTRY_TIMEZONES = {
     # North America
     "Canada": "America/Toronto",          # default; west coast cities override via CITY_TIMEZONES

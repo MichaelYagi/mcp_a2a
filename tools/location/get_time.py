@@ -8,13 +8,14 @@ from tools.location.get_time_data import DEFAULT_TZ
 
 def get_time(
     city: Optional[str] = None,
+    state: Optional[str] = None,
     country: Optional[str] = None,
     timezone: Optional[str] = None
 ) -> str:
-    loc = resolve_location(city, country)
+    loc = resolve_location(city, state, country)
 
     # Determine timezone
-    tz_name = timezone or resolve_timezone(loc["city"], loc["country"])
+    tz_name = timezone or resolve_timezone(loc["city"], loc["state"], loc["country"])
 
     try:
         tz = ZoneInfo(tz_name)
@@ -26,6 +27,7 @@ def get_time(
 
     result = {
         "city": loc["city"],
+        "state": loc["state"],
         "country": loc["country"],
         "timezone": tz_name,
         "local_time": now.isoformat()

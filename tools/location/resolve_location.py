@@ -1,7 +1,7 @@
 from typing import Optional
 from tools.location.detect_location import detect_default_location
 
-def resolve_location(city: Optional[str], country: Optional[str]):
+def resolve_location(city: Optional[str], state: Optional[str], country: Optional[str]):
     """
     Normalizes location input and applies auto-detected defaults.
     """
@@ -9,5 +9,6 @@ def resolve_location(city: Optional[str], country: Optional[str]):
 
     return {
         "city": city or default_loc["city"],
+        "state": state or default_loc["state"],
         "country": country or default_loc["country"]
     }

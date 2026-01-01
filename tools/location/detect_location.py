@@ -1,15 +1,39 @@
 from datetime import datetime
 
-# Map timezone → location
+# Map timezone → location (city, state/province/prefecture, country)
 TZ_TO_LOCATION = {
-    "America/Vancouver": {"city": "Surrey", "country": "Canada"},
-    "America/Toronto": {"city": "Toronto", "country": "Canada"},
-    "America/New_York": {"city": "New York", "country": "USA"},
-    "Europe/London": {"city": "London", "country": "UK"},
-    "Asia/Tokyo": {"city": "Tokyo", "country": "Japan"},
+    "America/Vancouver": {
+        "city": "Surrey",
+        "state": "British Columbia",
+        "country": "Canada"
+    },
+    "America/Toronto": {
+        "city": "Toronto",
+        "state": "Ontario",
+        "country": "Canada"
+    },
+    "America/New_York": {
+        "city": "New York",
+        "state": "New York",
+        "country": "USA"
+    },
+    "Europe/London": {
+        "city": "London",
+        "state": "England",
+        "country": "UK"
+    },
+    "Asia/Tokyo": {
+        "city": "Tokyo",
+        "state": "Tokyo Prefecture",
+        "country": "Japan"
+    },
 }
 
-DEFAULT_FALLBACK = {"city": "Surrey", "country": "Canada"}
+DEFAULT_FALLBACK = {
+    "city": "Surrey",
+    "state": "British Columbia",
+    "country": "Canada"
+}
 
 def detect_default_location():
     """

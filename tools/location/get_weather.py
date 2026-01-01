@@ -5,12 +5,12 @@ from typing import Optional
 from tools.location.resolve_location import resolve_location
 from dotenv import load_dotenv
 
-def get_weather(city: Optional[str] = None, country: Optional[str] = None) -> str:
+def get_weather(city: Optional[str] = None, state: Optional[str] = None, country: Optional[str] = None) -> str:
     """
     Fetches real weather data using WeatherAPI.com.
     Falls back to a clear error message if the API key is missing or the request fails.
     """
-    loc = resolve_location(city, country)
+    loc = resolve_location(city, state, country)
 
     load_dotenv()
     api_key = os.getenv("WEATHER_API_KEY")
@@ -19,11 +19,12 @@ def get_weather(city: Optional[str] = None, country: Optional[str] = None) -> st
             "error": "missing_api_key",
             "message": "Set WEATHER_API_KEY in your environment to enable real weather data.",
             "city": loc["city"],
+            "state": loc["state"],
             "country": loc["country"]
         }, indent=2)
 
-    # WeatherAPI expects "City,Country"
-    query = f"{loc['city']},{loc['country']}"
+    # WeatherAPI expects "City,State,Country"
+    query = f"{loc['city']},{loc['state']},{loc['country']}"
     url = f"https://api.weatherapi.com/v1/current.json?key={api_key}&q={query}&aqi=no"
 
     try:
@@ -36,6 +37,7 @@ def get_weather(city: Optional[str] = None, country: Optional[str] = None) -> st
                 "error": data["error"].get("code"),
                 "message": data["error"].get("message"),
                 "city": loc["city"],
+                "state": loc["state"],
                 "country": loc["country"]
             }, indent=2)
 
@@ -43,6 +45,7 @@ def get_weather(city: Optional[str] = None, country: Optional[str] = None) -> st
 
         result = {
             "city": loc["city"],
+            "state": loc["state"],
             "country": loc["country"],
             "weather": {
                 "condition": current["condition"]["text"],
@@ -58,5 +61,6 @@ def get_weather(city: Optional[str] = None, country: Optional[str] = None) -> st
             "error": "request_failed",
             "message": str(e),
             "city": loc["city"],
+            "state": loc["state"],
             "country": loc["country"]
         }, indent=2)
