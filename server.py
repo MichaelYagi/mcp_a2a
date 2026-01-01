@@ -1,6 +1,17 @@
 import json
 from typing import List, Optional
 from mcp.server.fastmcp import FastMCP
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+PROJECT_ROOT = Path(__file__).parent
+load_dotenv(PROJECT_ROOT / ".env", override=True)
+
+# Verify critical environment variables
+if not os.environ.get("OPENAI_API_KEY"):
+    print("Warning: OPENAI_API_KEY not found in environment")
 
 # ─────────────────────────────────────────────
 # Knowledge Base Tools

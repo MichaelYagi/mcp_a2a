@@ -9,6 +9,14 @@ from mcp_use.agents.mcpagent import MCPAgent
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+PROJECT_ROOT = Path(__file__).parent
+load_dotenv(PROJECT_ROOT / ".env", override=True)
+
+# Verify critical environment variables
+if not os.environ.get("OPENAI_API_KEY"):
+    print("Warning: OPENAI_API_KEY not found in environment")
+
 async def main():
     load_dotenv()
     # 1️⃣ LangChain Chat Model (OpenAI)
