@@ -2,6 +2,7 @@ import asyncio
 import os
 import platform
 import logging
+import requests
 
 from langchain_openai import ChatOpenAI
 from mcp_use.client.client import MCPClient
@@ -16,6 +17,13 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)
 # Verify critical environment variables
 if not os.environ.get("GROQ_API_KEY"):
     print("Warning: GROQ_API_KEY not found in environment")
+
+def get_public_ip():
+    try:
+        return requests.get("https://api.ipify.org").text
+    except:
+        return None
+
 
 async def main():
     load_dotenv()
@@ -47,17 +55,20 @@ async def main():
                 "cwd": str(PROJECT_ROOT),
                 "env": {
                     "GROQ_API_KEY": os.environ["GROQ_API_KEY"],
-                    "GROQ_MODEL": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+                    "GROQ_MODEL": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
+                    "CLIENT_IP": get_public_ip()
                 }
             }
         }
     })
 
     # 3️⃣ MCP Agent
+    SYSTEM_PROMPT = Path(str(PROJECT_ROOT / "prompts/tool_usage_guide.md")).read_text()
     agent = MCPAgent(
         llm=llm,
         client=client,
-        max_steps=10
+        max_steps=10,
+        system_prompt=SYSTEM_PROMPT
     )
 
     await agent.initialize()
