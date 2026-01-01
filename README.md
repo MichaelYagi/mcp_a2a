@@ -90,6 +90,7 @@ pip install tzdata
 ### Configuration for client.py
 
 Get OpenAI API key from https://console.groq.com/ (free)
+
 Get a Weather API key from https://www.weatherapi.com/ (free/rated)
 
 Create an ```.env``` file in the root of the project with the following details.
