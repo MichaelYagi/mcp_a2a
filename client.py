@@ -1,5 +1,6 @@
 import asyncio
 import os
+import platform
 import logging
 
 from langchain_openai import ChatOpenAI
@@ -34,7 +35,7 @@ async def main():
     client = MCPClient.from_dict({
         "mcpServers": {
             "local": {
-                "command": str(PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"),
+                "command": get_venv_python(PROJECT_ROOT),
                 "args": [str(PROJECT_ROOT / "server.py")],
                 "cwd": str(PROJECT_ROOT),
                 "env": {
@@ -77,6 +78,13 @@ async def main():
 
         except Exception as e:
             print(f"\n❌ Error: {e}\n")
+
+def get_venv_python(project_root):
+    """Get the correct Python executable path for current platform."""
+    if platform.system() == "Windows":
+        return str(project_root / ".venv" / "Scripts" / "python")
+    else:
+        return str(project_root / ".venv-wsl" / "bin" / "python")
 
 if __name__ == "__main__":
     asyncio.run(main())

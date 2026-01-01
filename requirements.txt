@@ -1,0 +1,10 @@
+# Core MCP dependencies
+mcp
+mcp-use
+psutil
+pathlib2
+typing-extensions
+python-dotenv
+langchain-openai
+openai
+tzdata

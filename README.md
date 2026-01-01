@@ -81,10 +81,7 @@ Python 3.10 or newer
 
 Install dependencies:
 ```
-pip install mcp-use
-pip install langchain-openai
-pip install openai
-pip install tzdata
+pip install -r requirements.txt
 ```
 
 ### Configuration for client.py
