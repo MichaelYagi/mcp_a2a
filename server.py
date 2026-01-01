@@ -21,7 +21,7 @@ from tools.knowledge_base.kb_update_versioned import kb_update_versioned
 from tools.system.system_info import get_system_stats
 from tools.system.processes import list_processes, kill_process
 # ─────────────────────────────────────────────
-# Todo Tools
+# To-do Tools
 # ─────────────────────────────────────────────
 from tools.todo.add_todo import add_todo
 from tools.todo.list_todos import list_todos
@@ -35,6 +35,7 @@ from tools.todo.delete_all_todos import delete_all_todos
 from tools.code_review.scan_directory import scan_directory
 from tools.code_review.summarize_codebase import summarize_codebase
 from tools.code_review.fix_bug import fix_bug
+from tools.code_review.search_code import search_code
 # ─────────────────────────────────────────────
 # Location Tools
 # ─────────────────────────────────────────────
@@ -125,9 +126,8 @@ def terminate_process(pid: int) -> str:
     return kill_process(pid)
 
 # ─────────────────────────────────────────────
-# Todo MCP Tools
+# To-do MCP Tools
 # ─────────────────────────────────────────────
-
 @mcp.tool()
 def add_todo_item(
     title: str,
@@ -193,6 +193,26 @@ def delete_all_todo_items() -> str:
 # ─────────────────────────────────────────────
 # Code Review MCP Tools
 # ─────────────────────────────────────────────
+@mcp.tool()
+def search_code_in_directory(
+        query: str,
+        extension: Optional[str] = None,
+        directory: Optional[str] = "."
+) -> str:
+    """
+    Search for text or regex patterns in the codebase.
+    Returns file paths, line numbers, and the matching text.
+
+    Args:
+        query: The string or regex to find (e.g., 'class Weather' or 'todo').
+        extension: Filter by file type (e.g., 'py', 'js').
+        directory: The folder to start searching from.
+    """
+    # Call the logic function
+    result = search_code(query, extension, directory)
+
+    # Return as a string for the AI to process
+    return json.dumps(result, indent=2)
 
 @mcp.tool()
 def scan_code_directory(path: str) -> str:
