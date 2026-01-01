@@ -91,7 +91,7 @@ The search engine is built to be lightweight and dependency-free. It processes q
 Create an ```.env``` file in the root of the project with the following details.
 ```
 WEATHER_API_KEY="<weather_api_key>"
-GROQ_API_KEY="<gsk_OpenAI_api_key>"
+GROQ_API_KEY="<gsk_groq_api_key>"
 GROQ_BASE_URL="https://api.groq.com/openai/v1"
 GROQ_MODEL="llama-3.1-8b-instant"
 ```
