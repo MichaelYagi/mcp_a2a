@@ -2,16 +2,14 @@ import json
 from typing import List, Optional
 from mcp.server.fastmcp import FastMCP
 from pathlib import Path
-from dotenv import load_dotenv
 import os
 
 # Load environment variables from .env file
 PROJECT_ROOT = Path(__file__).parent
-load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 # Verify critical environment variables
-if not os.environ.get("OPENAI_API_KEY"):
-    print("Warning: OPENAI_API_KEY not found in environment")
+if not os.environ.get("GROQ_API_KEY"):
+    print("Warning: GROQ_API_KEY not found in environment")
 
 # ─────────────────────────────────────────────
 # Knowledge Base Tools
@@ -191,7 +189,7 @@ def delete_todo_item(todo_id: str) -> str:
 @mcp.tool()
 def delete_all_todo_items() -> str:
     """
-    Deletes all todo items.
+    Deletes all to-do items.
     Returns a JSON string with count and deleted IDs.
     """
     deleted_ids = delete_all_todos()
@@ -215,7 +213,7 @@ def search_code_in_directory(
     Returns file paths, line numbers, and the matching text.
 
     Args:
-        query: The string or regex to find (e.g., 'class Weather' or 'todo').
+        query: The string or regex to find (e.g., 'class Weather' or 'to-do').
         extension: Filter by file type (e.g., 'py', 'js').
         directory: The folder to start searching from.
     """

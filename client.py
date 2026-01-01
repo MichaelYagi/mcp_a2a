@@ -14,15 +14,14 @@ PROJECT_ROOT = Path(__file__).parent
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 # Verify critical environment variables
-if not os.environ.get("OPENAI_API_KEY"):
-    print("Warning: OPENAI_API_KEY not found in environment")
+if not os.environ.get("GROQ_API_KEY"):
+    print("Warning: GROQ_API_KEY not found in environment")
 
 async def main():
     load_dotenv()
-    # 1️⃣ LangChain Chat Model (OpenAI)
     llm = ChatOpenAI(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model=os.environ.get("OPENAI_MODEL", "llama-3.1-8b-instant"),
+        api_key=os.environ["GROQ_API_KEY"],
+        model=os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
         temperature=0
     )
 
@@ -47,8 +46,8 @@ async def main():
                 "args": [str(PROJECT_ROOT / "server.py")],
                 "cwd": str(PROJECT_ROOT),
                 "env": {
-                    "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
-                    "OPENAI_MODEL": os.environ.get("OPENAI_MODEL", "llama-3.1-8b-instant")
+                    "GROQ_API_KEY": os.environ["GROQ_API_KEY"],
+                    "GROQ_MODEL": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
                 }
             }
         }

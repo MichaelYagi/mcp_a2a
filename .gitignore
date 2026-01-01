@@ -16,3 +16,4 @@ knowledge/
 /tools/knowledge_base/entries/
 /logs/
 /.venv-wsl/
+/.vscode
