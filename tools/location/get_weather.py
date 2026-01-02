@@ -24,7 +24,8 @@ def get_weather(city: Optional[str] = None, state: Optional[str] = None, country
         }, indent=2)
 
     # WeatherAPI expects "City,State,Country"
-    query = f"{loc['city']},{loc['state']},{loc['country']}"
+    query_parts = [loc['city'], loc['state'], loc['country']]
+    query = ",".join([p for p in query_parts if p])
     url = f"https://api.weatherapi.com/v1/current.json?key={api_key}&q={query}&aqi=no"
 
     try:

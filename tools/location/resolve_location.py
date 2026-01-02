@@ -3,12 +3,15 @@ from tools.location.detect_location import detect_default_location
 
 def resolve_location(city: Optional[str], state: Optional[str], country: Optional[str]):
     """
-    Normalizes location input and applies auto-detected defaults.
+    Normalizes location input. Only uses defaults if NO location info is provided.
     """
-    default_loc = detect_default_location()
+    # Only use system defaults if EVERYTHING is missing
+    if not city and not state and not country:
+        return detect_default_location()
 
+    # Otherwise, trust the input and don't mix in Surrey/BC defaults
     return {
-        "city": city or default_loc["city"],
-        "state": state or default_loc["state"],
-        "country": country or default_loc["country"]
+        "city": city.strip() if city else None,
+        "state": state.strip() if state else None,
+        "country": country.strip() if country else None
     }

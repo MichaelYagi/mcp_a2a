@@ -464,20 +464,8 @@ def get_time_tool(city: str | None = None, state: str | None = None, country: st
 def get_weather_tool(city: str | None = None, state: str | None = None, country: str | None = None) -> str:
     """
     Get current weather conditions for any location.
-
-    • City/state/country are OPTIONAL.
-    • Coordinates and timezone are NEVER required — the server determines them automatically.
-    • If the user provides only a city name, that is enough.
-    • If no location is provided, the server uses the client's IP address to infer the correct location.
-
-    Use this tool whenever the user asks about:
-    • weather
-    • temperature
-    • forecasts
-    • “weather here” or “weather in [city]”
-
-    Never ask the user for timezone or coordinates — the server resolves them automatically.
     """
+    # If the LLM didn't provide a city, but we have a CLIENT_IP, let's use it.
     if not city and CLIENT_IP:
         loc = geolocate_ip(CLIENT_IP)
         if loc:
@@ -485,7 +473,8 @@ def get_weather_tool(city: str | None = None, state: str | None = None, country:
             state = loc.get("region")
             country = loc.get("country_name")
 
-    return json.dumps(get_weather_fn(city, state, country), indent=2)
+    # This calls your get_weather.py which now cleans the query string
+    return get_weather_fn(city, state, country)
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
