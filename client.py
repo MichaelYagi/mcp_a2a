@@ -1,6 +1,5 @@
 import asyncio
 import os
-import platform
 import logging
 import requests
 
@@ -97,12 +96,22 @@ async def main():
         except Exception as e:
             print(f"\n❌ Error: {e}\n")
 
-def get_venv_python(project_root):
-    """Get the correct Python executable path for current platform."""
-    if platform.system() == "Windows":
-        return str(project_root / ".venv" / "Scripts" / "python")
-    else:
-        return str(project_root / ".venv-wsl" / "bin" / "python")
+def get_venv_python(project_root: Path) -> str:
+    """Return the correct Python executable path by checking known locations."""
+
+    # Linux/macOS first (WSL uses this)
+    candidates = [
+        project_root / ".venv" / "bin" / "python",          # WSL/Linux/macOS
+        project_root / ".venv-wsl" / "bin" / "python",      # Legacy WSL
+        project_root / ".venv" / "Scripts" / "python.exe",  # Windows
+        project_root / ".venv" / "Scripts" / "python",      # Windows alt
+    ]
+
+    for path in candidates:
+        if path.exists():
+            return str(path)
+
+    raise FileNotFoundError("No valid Python executable found in expected venv locations.")
 
 if __name__ == "__main__":
     asyncio.run(main())
