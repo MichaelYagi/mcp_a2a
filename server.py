@@ -12,10 +12,6 @@ CLIENT_IP = os.environ.get("CLIENT_IP")
 PROJECT_ROOT = Path(__file__).parent
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
-# Verify critical environment variables
-if not os.environ.get("GROQ_API_KEY"):
-    print("Warning: GROQ_API_KEY not found in environment")
-
 # ─────────────────────────────────────────────
 # Knowledge Base Tools
 # ─────────────────────────────────────────────

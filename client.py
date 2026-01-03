@@ -3,20 +3,15 @@ import os
 import logging
 import requests
 
-from langchain_groq import ChatGroq
 from mcp_use.client.client import MCPClient
 from mcp_use.agents.mcpagent import MCPAgent
 from pathlib import Path
 from dotenv import load_dotenv
-from langchain_core.language_models import BaseLanguageModel
+from langchain_ollama import ChatOllama
 
 # Load environment variables from .env file
 PROJECT_ROOT = Path(__file__).parent
 load_dotenv(PROJECT_ROOT / ".env", override=True)
-
-# Verify critical environment variables
-if not os.environ.get("GROQ_API_KEY"):
-    print("Warning: GROQ_API_KEY not found in environment")
 
 def get_public_ip():
     try:
@@ -49,8 +44,6 @@ async def main():
                 "args": [str(PROJECT_ROOT / "server.py")],
                 "cwd": str(PROJECT_ROOT),
                 "env": {
-                    "GROQ_API_KEY": os.environ["GROQ_API_KEY"],
-                    "GROQ_MODEL": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
                     "CLIENT_IP": get_public_ip()
                 }
             }
@@ -60,7 +53,10 @@ async def main():
     # 3️⃣ MCP Agent
     SYSTEM_PROMPT = Path(str(PROJECT_ROOT / "prompts/tool_usage_guide.md")).read_text()
 
-    llm = ChatGroq(model="llama-3.1-8b-instant", api_key=os.getenv("GROQ_API_KEY"))
+    llm = ChatOllama(
+        model="qwen2.5:7b",
+        temperature=0
+    )
 
     agent = MCPAgent(
         llm=llm,
@@ -88,7 +84,7 @@ async def main():
                 continue
 
             # result = await agent.run(query)
-            result = await agent.run(SYSTEM_PROMPT + "\n\nUser request:\n" + query)
+            result = await agent.run(query)
             print("\n" + result + "\n")
 
         except KeyboardInterrupt:

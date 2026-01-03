@@ -34,8 +34,7 @@ The server separates tool logic from the protocol interface, allowing for rapid 
 mcp-server/
 │
 ├── server.py                 # Core hub; registers and exposes tools
-├── client.py                 # MCP Client; the AI Agent (powered by Groq/LLM)
-├── .env                      # API keys and environment configuration
+├── client.py                 # MCP Client; the AI Agent (powered by Qwen)
 │
 ├── tools/
 │   ├── knowledge_base/       # Domain: Structured data & search
@@ -83,25 +82,36 @@ The search engine is built to be lightweight and dependency-free. It processes q
 ### 1. Prerequisites
 
 * Python 3.10+
-* Groq API Key: Get it at [console.groq.com](https://console.groq.com/) (Free)
 * Weather API Key: Get it at [weatherapi.com](https://www.weatherapi.com/) (Free)
 
-### 2. Environment Configuration
-
-Create an ```.env``` file in the root of the project with the following details.
-```
-WEATHER_API_KEY="<weather_api_key>"
-GROQ_API_KEY="<gsk_groq_api_key>"
-GROQ_MODEL="llama-3.1-8b-instant"
-```
-
-### 3. Install dependencies
-```
+### 2. Install dependencies
+``` 
+curl -fsSL https://ollama.com/install.sh | sh
 python3 -m venv .venv
-source .venv/bin/activate 
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 3. Run Ollama server & Download qwen
+
+Run in a separate terminal ```ollama serve```
+
+Download the model ```ollama pull qwen2.5:7b```
+
+**Note:** 
+
+Explore more models at https://ollama.com/library. 
+
+You may download & use other models through ```ollama pull <model>```. 
+
+Ensure you edit the ```client.py``` file and replace
+```
+llm = ChatOllama(
+    model="<whatever model you pulled above>",
+    temperature=0
+)
+```
+Ensure you download models with **advertised tool support**.
 ### 4. Running the Project
 ```
 python client.py

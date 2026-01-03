@@ -5,6 +5,7 @@ psutil
 pathlib2
 typing-extensions
 python-dotenv
-langchain_groq
+ollama
+langchain-ollama
 openai
 tzdata
