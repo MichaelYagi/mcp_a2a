@@ -46,7 +46,7 @@ mcp-server/
 │   └── more_tools/
 │       └── ...
 │
-└── schemas/                  # JSON schemas defining tool inputs
+├── schemas/                  # JSON schemas defining tool inputs
 │   ├── knowledge_base/       
 │   │   └── kb_add.json
 │   │   └── ...
