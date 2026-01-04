@@ -14,11 +14,11 @@ from langchain_ollama import ChatOllama
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+from prompts.prompts import INTENT_DETECTOR_PROMPT, SUMMARIZE_TOOL_RESULT_PROMPT, DIRECT_ANSWER_PROMPT, AGENT_PROMPT
 
 # Load environment variables
 PROJECT_ROOT = Path(__file__).parent
 load_dotenv(PROJECT_ROOT / ".env", override=True)
-DIRECT_ANSWER_PROMPT = """ You are a helpful assistant. Do NOT call tools. Do NOT describe tool usage. Answer the user's question directly using your own knowledge. """
 
 # ============================================================================
 # LangGraph State Definition
@@ -26,29 +26,6 @@ DIRECT_ANSWER_PROMPT = """ You are a helpful assistant. Do NOT call tools. Do NO
 
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
-
-SUMMARIZE_TOOL_RESULT_PROMPT = """
-You are formatting tool results for the user.
-
-If the tool returns system metrics:
-- Use bullet points.
-- Include CPU, RAM, Disk, OS.
-- Keep it concise.
-
-If the tool returns network information:
-- Include IP, hostname, interfaces.
-- Use a short paragraph.
-
-If the tool returns file information:
-- List filenames.
-- Mention size and type.
-
-Never mention tools, JSON, or code.
-Never hallucinate missing fields.
-
-Tool output:
-{metrics}
-"""
 
 async def summarize_tool_result(llm, system_prompt, tool_text):
     prompt = SUMMARIZE_TOOL_RESULT_PROMPT.format(metrics=tool_text)
@@ -61,36 +38,7 @@ async def summarize_tool_result(llm, system_prompt, tool_text):
 async def detect_tool_intent(llm, query: str) -> bool:
     """Return True if tools SHOULD be used, False if the user wants a direct answer."""
     messages = [
-        SystemMessage(content="""
-        You are a classifier that decides whether the user is asking for REAL DATA 
-        that requires calling a tool, or a general explanation that should be answered directly.
-
-        Respond ONLY with:
-        - "tools"  → if the user is asking for system information, environment details, 
-                     measurements, stats, files, hardware info, network info, or anything 
-                     that cannot be answered from general knowledge.
-        - "no-tools" → if the user is asking for general knowledge, explanations, opinions, 
-                       or anything that does NOT require accessing the system.
-
-        Examples that REQUIRE tools:
-        - "what is my cpu usage"
-        - "how much disk space do I have"
-        - "what is my ip"
-        - "list my running processes"
-        - "what files are in this folder"
-        - "check my memory usage"
-        - "what ports are open"
-
-        Examples that DO NOT require tools:
-        - "what is cpu usage"
-        - "explain how ram works"
-        - "what is the population of vancouver"
-        - "what is docker"
-        - "explain kubernetes"
-
-        Respond ONLY with: tools  OR  no-tools.
-        """)
-        ,
+        SystemMessage(content=INTENT_DETECTOR_PROMPT),
         HumanMessage(content=query)
     ]
     resp = await llm.ainvoke(messages)
@@ -252,11 +200,7 @@ async def main():
     if SYSTEM_PROMPT_PATH.exists():
         SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text()
     else:
-        SYSTEM_PROMPT = (
-            "You are a helpful assistant with access to tools.\n"
-            "Use tools when appropriate. Use tool results to answer.\n"
-            "Do not call the same tool repeatedly with the same parameters."
-        )
+        SYSTEM_PROMPT = AGENT_PROMPT
         logger.warning("⚠️ System prompt file not found, using default")
 
     model_name = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
