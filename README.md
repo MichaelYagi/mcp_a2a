@@ -90,7 +90,7 @@ pip install -r requirements.txt
 
 Run in a separate terminal ```ollama serve```
 
-Download the model ```ollama pull qwen2.5:3b``` (4.7GB)
+Download the model ```ollama pull qwen2.5:3b``` (1.9GB)
 
 **Note:** 
 
