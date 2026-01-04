@@ -62,15 +62,15 @@ mcp-server/
 
 * Python 3.10+
 * Weather API Key: Get it at [weatherapi.com](https://www.weatherapi.com/) (Free)
-* System Requirements for ```qwen2.5:7b```
+* System Requirements for ```qwen2.5:3b```
 
-| Component | Minimum | Recommended |
-|----------|----------|-------------|
-| **GPU** | 4–5 GB VRAM (Q4_K_M) | 16 GB VRAM (FP16) |
-| **CPU** | 6‑core consumer CPU | 8–12 cores |
-| **RAM** | 16 GB | 32 GB |
-| **Disk** | 10 GB | 20+ GB |
-
+| Category        | Requirement                                      |
+|-----------------|--------------------------------------------------|
+| Minimum VRAM    | 6 GB (FP16)                                      |
+| INT8 VRAM       | 4.27–12.17 GB depending on context length        |
+| FP16 VRAM       | 7.44–20.60 GB depending on context length        |
+| System RAM      | 16–32 GB recommended                             |
+| Storage         | ~50 GB recommended                               |
 
 ### 2. Create a ```.env``` file in the root directory
 ```
@@ -139,5 +139,6 @@ Adding a new capability is a three-step process:
 1. **Logic**: Add a Python script to `tools/<new_domain>/`.
 2. **Schema**: Define the input parameters in `schemas/<new_domain>/<tool_name>.json`.
 3. **Register**: Import the function into `server.py` and wrap it with the `@mcp.tool()` decorator.
+
 
 This modular approach ensures the server remains maintainable even as you add dozens of specialized tools.
