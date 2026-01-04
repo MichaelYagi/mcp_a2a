@@ -27,11 +27,33 @@ DIRECT_ANSWER_PROMPT = """ You are a helpful assistant. Do NOT call tools. Do NO
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
+SUMMARIZE_TOOL_RESULT_PROMPT = """
+You are formatting tool results for the user.
+
+If the tool returns system metrics:
+- Use bullet points.
+- Include CPU, RAM, Disk, OS.
+- Keep it concise.
+
+If the tool returns network information:
+- Include IP, hostname, interfaces.
+- Use a short paragraph.
+
+If the tool returns file information:
+- List filenames.
+- Mention size and type.
+
+Never mention tools, JSON, or code.
+Never hallucinate missing fields.
+
+Tool output:
+{metrics}
+"""
+
 async def summarize_tool_result(llm, system_prompt, tool_text):
-    """Ask the LLM (with tools disabled) to summarize the tool result naturally."""
+    prompt = SUMMARIZE_TOOL_RESULT_PROMPT.format(metrics=tool_text)
     messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Explain this result in natural language:\n\n{tool_text}")
+        SystemMessage(content=prompt)
     ]
     response = await llm.ainvoke(messages)
     return response.content
@@ -82,22 +104,6 @@ async def detect_tool_intent(llm, query: str) -> bool:
 def should_continue(state: AgentState) -> str:
     logger = logging.getLogger("mcp_use")
     messages = state["messages"]
-
-    # --- USER OVERRIDE: disable tools ---
-    for msg in messages:
-        if isinstance(msg, HumanMessage):
-            text = msg.content.lower()
-            if any(phrase in text for phrase in [
-                "ignore all tools",
-                "ignore tools",
-                "do not call any tools",
-                "do not call tools",
-                "no tools",
-            ]):
-                logger.info("🚫 User requested no tools — bypassing tool execution")
-                return "end"
-    # -------------------------------------
-
     last = messages[-1]
 
     # If the last message is a tool result, STOP.
@@ -133,6 +139,11 @@ def should_continue(state: AgentState) -> str:
 # Agent Graph Builder
 # ============================================================================
 
+# Graph based workflow
+# Nodes → steps (LLM calls, tool calls, logic functions)
+# Edges → transitions between steps
+# State → the memory passed between steps
+# Conditions → logic that decides what happens next
 def create_langgraph_agent(llm_for_query, tools_for_query):
     logger = logging.getLogger("mcp_use")
 
