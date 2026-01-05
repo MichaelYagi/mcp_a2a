@@ -150,15 +150,37 @@ def get_venv_python(project_root: Path) -> str:
 # ============================================================================
 
 async def websocket_handler(websocket, agent, system_prompt):
-    async for prompt in websocket:
-        initial_messages = [
-            HumanMessage(content=system_prompt + "\n\nUser: " + prompt)
-        ]
-        initial_state = {"messages": initial_messages}
+    # Persistent conversation state for this WebSocket session
+    conversation_state = {"messages": []}
 
-        result = await agent.ainvoke(initial_state, config={"recursion_limit": 50})
+    # How many messages to keep (user + assistant only)
+    MAX_HISTORY = 20
+
+    async for prompt in websocket:
+        # Add user message
+        conversation_state["messages"].append(
+            HumanMessage(content=prompt)
+        )
+
+        # Trim history (keep only last N user/assistant messages)
+        conversation_state["messages"] = [
+            m for m in conversation_state["messages"]
+            if isinstance(m, (HumanMessage, AIMessage))
+        ][-MAX_HISTORY:]
+
+        # Run the agent with full (trimmed) history
+        result = await agent.ainvoke(
+            conversation_state,
+            config={"recursion_limit": 50}
+        )
+
+        # Extract final answer
         final_message = result["messages"][-1]
 
+        # Add assistant message to history
+        conversation_state["messages"].append(final_message)
+
+        # Send response back to browser
         if isinstance(final_message, AIMessage):
             answer = final_message.content
         else:
@@ -178,7 +200,12 @@ async def start_websocket_server(agent, system_prompt):
 async def cli_loop(agent, system_prompt, logger):
     print("\n✅ MCP Agent ready with LangGraph. Type a prompt (Ctrl+C to exit).\n")
 
-    # 8️⃣ Interactive loop
+    # Persistent conversation state
+    conversation_state = {"messages": []}
+
+    # How many messages to keep (user + assistant only)
+    MAX_HISTORY = 20
+
     while True:
         try:
             query = input("> ").strip()
@@ -187,27 +214,31 @@ async def cli_loop(agent, system_prompt, logger):
 
             logger.info(f"💬 Received query: '{query}'")
 
-            # Create initial state with system prompt and user query
-            initial_messages = [
-                HumanMessage(content=SYSTEM_PROMPT + "\n\nUser: " + query)
-            ]
+            # Add user message to history
+            conversation_state["messages"].append(
+                HumanMessage(content=query)
+            )
 
-            initial_state = {
-                "messages": initial_messages
-            }
+            # Trim history (keep only last N user/assistant messages)
+            conversation_state["messages"] = [
+                m for m in conversation_state["messages"]
+                if isinstance(m, (HumanMessage, AIMessage))
+            ][-MAX_HISTORY:]
 
-            # Configuration with recursion limit
-            config = {
-                "recursion_limit": 50  # Safety net, but should stop naturally now
-            }
-
-            # Run the agent (ASYNC VERSION)
+            # Run the agent with full (trimmed) history
             logger.info("🏁 Starting agent execution")
-            result = await agent.ainvoke(initial_state, config=config)
+            result = await agent.ainvoke(
+                conversation_state,
+                config={"recursion_limit": 50}
+            )
 
-            # Extract the final answer
+            # Extract final answer
             final_message = result["messages"][-1]
 
+            # Add assistant message to history
+            conversation_state["messages"].append(final_message)
+
+            # Print answer
             if isinstance(final_message, AIMessage):
                 answer = final_message.content
             else:
