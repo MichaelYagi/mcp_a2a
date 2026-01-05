@@ -86,6 +86,7 @@
 <div id="status"></div>
 
 <script>
+    const STORAGE_KEY = "mcp_chat_history";
     const ws = new WebSocket("ws://localhost:8765");
     const chat = document.getElementById("chat");
     const input = document.getElementById("input");
@@ -93,25 +94,57 @@
     const status = document.getElementById("status");
 
     let isProcessing = false;
+    let chatHistory = loadHistory();
+
+    function saveHistory(messages) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    }
+
+    function loadHistory() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+    }
 
     ws.onopen = () => {
-      status.textContent = "Connected";
+        status.textContent = "Connected";
+
+        ws.send(JSON.stringify({ type: "history_request" }));
     };
 
     ws.onclose = () => {
-      status.textContent = "Disconnected";
+        status.textContent = "Disconnected";
     };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data);
 
-      // Add assistant message
-      addMessage(data.response, "assistant");
+        // Backend sends full history
+        if (data.type === "history_sync") {
+            const history = data.history;
 
-      // Re-enable UI
-      isProcessing = false;
-      sendBtn.disabled = false;
-      status.textContent = "";
+            // If backend has no history, clear localStorage
+            if (history.length === 0) {
+                localStorage.removeItem(STORAGE_KEY);
+                chat.innerHTML = "";
+                chatHistory = [];
+                return;
+            }
+
+            // Replace local history with backend history
+            chatHistory = history;
+            saveHistory(chatHistory);
+
+            // Render UI
+            chat.innerHTML = "";
+            chatHistory.forEach(msg => addMessage(msg.text, msg.role));
+            return;
+        }
+
+        // Normal assistant message
+        if (data.type === "assistant_message") {
+            addMessage(data.text, "assistant");
+            return;
+        }
     };
 
     function formatMessage(text) {
@@ -130,6 +163,11 @@
         div.innerHTML = formatMessage(text);
         chat.appendChild(div);
 
+        // Save to localStorage
+        chatHistory.push({ role, text });
+        saveHistory(chatHistory);
+
+        // Auto-scroll
         chat.scrollTop = chat.scrollHeight;
     }
 
@@ -158,6 +196,18 @@
             send();
         }
     });
+
+    // Render existing messages
+    chatHistory.forEach(msg => {
+        const div = document.createElement("div");
+        div.className = `msg ${msg.role}`;
+        div.innerHTML = formatMessage(msg.text);
+        chat.appendChild(div);
+    });
+
+    // Scroll to bottom
+    chat.scrollTop = chat.scrollHeight;
+
 </script>
 
 </body>

@@ -149,44 +149,69 @@ def get_venv_python(project_root: Path) -> str:
 # Main Function
 # ============================================================================
 
-async def websocket_handler(websocket, agent, system_prompt):
-    # Persistent conversation state for this WebSocket session
-    conversation_state = {"messages": []}
+GLOBAL_CONVERSATION_STATE = {"messages": []}
 
-    # How many messages to keep (user + assistant only)
+async def websocket_handler(websocket, agent, system_prompt):
+    conversation_state = GLOBAL_CONVERSATION_STATE
     MAX_HISTORY = 20
 
-    async for prompt in websocket:
-        # Add user message
-        conversation_state["messages"].append(
-            HumanMessage(content=prompt)
-        )
+    async for raw in websocket:
 
-        # Trim history (keep only last N user/assistant messages)
-        conversation_state["messages"] = [
-            m for m in conversation_state["messages"]
-            if isinstance(m, (HumanMessage, AIMessage))
-        ][-MAX_HISTORY:]
+        # 1. Ignore empty or whitespace-only messages
+        if not raw or not raw.strip():
+            continue
 
-        # Run the agent with full (trimmed) history
-        result = await agent.ainvoke(
-            conversation_state,
-            config={"recursion_limit": 50}
-        )
+        # 2. Try to parse JSON; if not JSON, treat as plain user text
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = {"type": "user", "text": raw}
 
-        # Extract final answer
-        final_message = result["messages"][-1]
+        # 3. Browser requests history sync
+        if data.get("type") == "history_request":
+            history_payload = [
+                {"role": "user", "text": m.content} if isinstance(m, HumanMessage)
+                else {"role": "assistant", "text": m.content}
+                for m in conversation_state["messages"]
+            ]
 
-        # Add assistant message to history
-        conversation_state["messages"].append(final_message)
+            await websocket.send(json.dumps({
+                "type": "history_sync",
+                "history": history_payload
+            }))
+            continue
 
-        # Send response back to browser
-        if isinstance(final_message, AIMessage):
-            answer = final_message.content
-        else:
-            answer = str(final_message)
+        # 4. Normal user message
+        if data.get("type") == "user" or "text" in data:
+            prompt = data.get("text")
 
-        await websocket.send(json.dumps({"response": answer}))
+            # Add user message
+            conversation_state["messages"].append(
+                HumanMessage(content=prompt)
+            )
+
+            # Trim history
+            conversation_state["messages"] = [
+                m for m in conversation_state["messages"]
+                if isinstance(m, (HumanMessage, AIMessage))
+            ][-MAX_HISTORY:]
+
+            # Run agent
+            result = await agent.ainvoke(
+                conversation_state,
+                config={"recursion_limit": 50}
+            )
+
+            final_message = result["messages"][-1]
+
+            # Add assistant message
+            conversation_state["messages"].append(final_message)
+
+            # Send response
+            await websocket.send(json.dumps({
+                "type": "assistant_message",
+                "text": final_message.content
+            }))
 
 async def start_websocket_server(agent, system_prompt):
     async with websockets.serve(
