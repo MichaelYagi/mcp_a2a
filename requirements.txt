@@ -5,7 +5,9 @@ psutil
 pathlib2
 typing-extensions
 python-dotenv
+requests
 ollama
 langchain-ollama
+websockets
 openai
 tzdata

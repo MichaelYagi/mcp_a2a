@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MCP Browser Client</title>
+</head>
+<body>
+  <h1>MCP Browser Client</h1>
+
+  <textarea id="input" rows="4" cols="60"></textarea><br>
+  <button onclick="send()">Send</button>
+
+  <pre id="output"></pre>
+
+  <script>
+    const ws = new WebSocket("ws://localhost:8765");
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      document.getElementById("output").textContent = data.response;
+    };
+
+    function send() {
+      const text = document.getElementById("input").value;
+      ws.send(text);
+    }
+  </script>
+</body>
+</html>

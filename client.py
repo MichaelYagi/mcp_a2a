@@ -2,9 +2,11 @@ import asyncio
 import os
 import logging
 import requests
-from typing import TypedDict, Annotated, Sequence
 import operator
+import json
+import websockets
 
+from typing import TypedDict, Annotated, Sequence
 from mcp_use.client.client import MCPClient
 from mcp_use.agents.mcpagent import MCPAgent
 from pathlib import Path
@@ -142,6 +144,25 @@ def get_venv_python(project_root: Path) -> str:
 # Main Function
 # ============================================================================
 
+async def websocket_handler(websocket, agent, system_prompt):
+    async for prompt in websocket:
+        # Build the same initial state your CLI loop uses
+        initial_messages = [
+            HumanMessage(content=system_prompt + "\n\nUser: " + prompt)
+        ]
+
+        initial_state = {"messages": initial_messages}
+
+        result = await agent.ainvoke(initial_state, config={"recursion_limit": 50})
+        final_message = result["messages"][-1]
+
+        if isinstance(final_message, AIMessage):
+            answer = final_message.content
+        else:
+            answer = str(final_message)
+
+        await websocket.send(json.dumps({"response": answer}))
+
 async def main():
     load_dotenv()
 
@@ -225,53 +246,65 @@ Provide clear, concise answers based on the tool results."""
     # 7️⃣ Create LangGraph agent with stop conditions
     agent = create_langgraph_agent(llm_with_tools, tools)
 
-    print("\n✅ MCP Agent ready with LangGraph. Type a prompt (Ctrl+C to exit).\n")
+    async def start_websocket_server():
+        async with websockets.serve(
+                lambda ws: websocket_handler(ws, agent, SYSTEM_PROMPT),
+                "localhost",
+                8765
+        ):
+            print("🌐 WebSocket server running at ws://localhost:8765")
+            await asyncio.Future()  # run forever
 
-    # 8️⃣ Interactive loop
-    while True:
-        try:
-            query = input("> ").strip()
-            if not query:
-                continue
+    print("\n🌐 MCP Agent ready. Open your browser UI.\n")
+    await start_websocket_server()
 
-            logger.info(f"💬 Received query: '{query}'")
-
-            # Create initial state with system prompt and user query
-            initial_messages = [
-                HumanMessage(content=SYSTEM_PROMPT + "\n\nUser: " + query)
-            ]
-
-            initial_state = {
-                "messages": initial_messages
-            }
-
-            # Configuration with recursion limit
-            config = {
-                "recursion_limit": 50  # Safety net, but should stop naturally now
-            }
-
-            # Run the agent (ASYNC VERSION)
-            logger.info("🏁 Starting agent execution")
-            result = await agent.ainvoke(initial_state, config=config)
-
-            # Extract the final answer
-            final_message = result["messages"][-1]
-
-            if isinstance(final_message, AIMessage):
-                answer = final_message.content
-            else:
-                answer = str(final_message)
-
-            print("\n" + answer + "\n")
-            logger.info("✅ Query completed successfully")
-
-        except KeyboardInterrupt:
-            print("\n👋 Exiting.")
-            break
-
-        except Exception as e:
-            logger.error(f"❌ Error during agent execution: {e}", exc_info=True)
-            print(f"\n❌ Error: {e}\n")
+    # print("\n✅ MCP Agent ready with LangGraph. Type a prompt (Ctrl+C to exit).\n")
+    #
+    # # 8️⃣ Interactive loop
+    # while True:
+    #     try:
+    #         query = input("> ").strip()
+    #         if not query:
+    #             continue
+    #
+    #         logger.info(f"💬 Received query: '{query}'")
+    #
+    #         # Create initial state with system prompt and user query
+    #         initial_messages = [
+    #             HumanMessage(content=SYSTEM_PROMPT + "\n\nUser: " + query)
+    #         ]
+    #
+    #         initial_state = {
+    #             "messages": initial_messages
+    #         }
+    #
+    #         # Configuration with recursion limit
+    #         config = {
+    #             "recursion_limit": 50  # Safety net, but should stop naturally now
+    #         }
+    #
+    #         # Run the agent (ASYNC VERSION)
+    #         logger.info("🏁 Starting agent execution")
+    #         result = await agent.ainvoke(initial_state, config=config)
+    #
+    #         # Extract the final answer
+    #         final_message = result["messages"][-1]
+    #
+    #         if isinstance(final_message, AIMessage):
+    #             answer = final_message.content
+    #         else:
+    #             answer = str(final_message)
+    #
+    #         print("\n" + answer + "\n")
+    #         logger.info("✅ Query completed successfully")
+    #
+    #     except KeyboardInterrupt:
+    #         print("\n👋 Exiting.")
+    #         break
+    #
+    #     except Exception as e:
+    #         logger.error(f"❌ Error during agent execution: {e}", exc_info=True)
+    #         print(f"\n❌ Error: {e}\n")
 
 
 if __name__ == "__main__":
