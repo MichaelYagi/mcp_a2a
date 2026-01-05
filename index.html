@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MCP Browser Client</title>
     <style>
         body {
@@ -68,157 +70,156 @@
             font-style: italic;
             color: #666;
             height: 1.2rem;
-            margin-top: 0.5rem;
+            margin-top: 1rem;
         }
   </style>
 </head>
 <body>
+    <h1>MCP Browser Client</h1>
 
-<h1>MCP Browser Client</h1>
+    <div id="chat"></div>
 
-<div id="chat"></div>
+    <div id="inputRow">
+        <textarea id="input" placeholder="Type your message..."></textarea>
+        <button id="sendBtn" onclick="send()">Send</button>
+    </div>
 
-<div id="inputRow">
-    <textarea id="input" placeholder="Type your message..."></textarea>
-    <button id="sendBtn" onclick="send()">Send</button>
-</div>
+    <div id="status"></div>
 
-<div id="status"></div>
+    <script>
+        const STORAGE_KEY = "mcp_chat_history";
+        const ws = new WebSocket("ws://localhost:8765");
+        const chat = document.getElementById("chat");
+        const input = document.getElementById("input");
+        const sendBtn = document.getElementById("sendBtn");
+        const status = document.getElementById("status");
 
-<script>
-    const STORAGE_KEY = "mcp_chat_history";
-    const ws = new WebSocket("ws://localhost:8765");
-    const chat = document.getElementById("chat");
-    const input = document.getElementById("input");
-    const sendBtn = document.getElementById("sendBtn");
-    const status = document.getElementById("status");
+        let isProcessing = false;
+        let chatHistory = loadHistory();
 
-    let isProcessing = false;
-    let chatHistory = loadHistory();
+        function saveHistory(messages) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+        }
 
-    function saveHistory(messages) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    }
+        function loadHistory() {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            return raw ? JSON.parse(raw) : [];
+        }
 
-    function loadHistory() {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : [];
-    }
+        ws.onopen = () => {
+            status.textContent = "Connected";
 
-    ws.onopen = () => {
-        status.textContent = "Connected";
+            ws.send(JSON.stringify({ type: "history_request" }));
+        };
 
-        ws.send(JSON.stringify({ type: "history_request" }));
-    };
+        ws.onclose = () => {
+            status.textContent = "Disconnected";
+        };
 
-    ws.onclose = () => {
-        status.textContent = "Disconnected";
-    };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
 
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+            if (data.type === "history_sync") {
+                const history = data.history;
 
-        if (data.type === "history_sync") {
-            const history = data.history;
+                if (history.length === 0) {
+                    localStorage.removeItem(STORAGE_KEY);
+                    chat.innerHTML = "";
+                    chatHistory = [];
+                } else {
+                    chatHistory = history;
+                    saveHistory(chatHistory);
+                    chat.innerHTML = "";
+                    chatHistory.forEach(msg => addMessage(msg.text, msg.role));
+                }
 
-            if (history.length === 0) {
-                localStorage.removeItem(STORAGE_KEY);
-                chat.innerHTML = "";
-                chatHistory = [];
-            } else {
-                chatHistory = history;
-                saveHistory(chatHistory);
-                chat.innerHTML = "";
-                chatHistory.forEach(msg => addMessage(msg.text, msg.role));
+                // Re-enable UI here too
+                isProcessing = false;
+                sendBtn.disabled = false;
+                status.textContent = "";
+                return;
             }
 
-            // Re-enable UI here too
-            isProcessing = false;
-            sendBtn.disabled = false;
-            status.textContent = "";
-            return;
+            if (data.type === "assistant_message") {
+                addMessage(data.text, "assistant");
+
+                // Re-enable UI
+                isProcessing = false;
+                sendBtn.disabled = false;
+                status.textContent = "";
+                return;
+            }
+        };
+
+        function formatMessage(text) {
+            // 1. Preserve blank line before list items
+            // Convert "\n\n- " into "\n\n" (keeps the blank line)
+            text = text.replace(/\n\s*\n\s*-\s+/g, "\n\n");
+
+            // 2. Convert single-line list items "- X" into "X" without adding blank lines
+            text = text.replace(/\n\s*-\s+/g, "\n");
+
+            // 3. Convert **bold** to <strong>
+            text = text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+            // 4. Convert blank lines to <br><br>
+            text = text.replace(/\n\s*\n/g, "<br><br>");
+
+            return text;
         }
 
-        if (data.type === "assistant_message") {
-            addMessage(data.text, "assistant");
+        function addMessage(text, role) {
+            const div = document.createElement("div");
+            div.className = `msg ${role}`;
+            div.innerHTML = formatMessage(text);
+            chat.appendChild(div);
 
-            // Re-enable UI
-            isProcessing = false;
-            sendBtn.disabled = false;
-            status.textContent = "";
-            return;
+            // Save to localStorage
+            chatHistory.push({ role, text });
+            saveHistory(chatHistory);
+
+            // Auto-scroll
+            chat.scrollTop = chat.scrollHeight;
         }
-    };
 
-    function formatMessage(text) {
-        // 1. Preserve blank line before list items
-        // Convert "\n\n- " into "\n\n" (keeps the blank line)
-        text = text.replace(/\n\s*\n\s*-\s+/g, "\n\n");
+        function send() {
+            if (isProcessing) return;
 
-        // 2. Convert single-line list items "- X" into "X" without adding blank lines
-        text = text.replace(/\n\s*-\s+/g, "\n");
+            const text = input.value.trim();
+            if (!text) return;
 
-        // 3. Convert **bold** to <strong>
-        text = text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+            // Add user message to UI
+            addMessage(text, "user");
 
-        // 4. Convert blank lines to <br><br>
-        text = text.replace(/\n\s*\n/g, "<br><br>");
+            // Disable UI while processing
+            isProcessing = true;
+            sendBtn.disabled = true;
+            status.textContent = "Processing…";
 
-        return text;
-    }
+            ws.send(text);
+            input.value = "";
+        }
 
-    function addMessage(text, role) {
-        const div = document.createElement("div");
-        div.className = `msg ${role}`;
-        div.innerHTML = formatMessage(text);
-        chat.appendChild(div);
+        // Submit on Enter (Shift+Enter for newline)
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+            }
+        });
 
-        // Save to localStorage
-        chatHistory.push({ role, text });
-        saveHistory(chatHistory);
+        // Render existing messages
+        chatHistory.forEach(msg => {
+            const div = document.createElement("div");
+            div.className = `msg ${msg.role}`;
+            div.innerHTML = formatMessage(msg.text);
+            chat.appendChild(div);
+        });
 
-        // Auto-scroll
+        // Scroll to bottom
         chat.scrollTop = chat.scrollHeight;
-    }
 
-    function send() {
-        if (isProcessing) return;
-
-        const text = input.value.trim();
-        if (!text) return;
-
-        // Add user message to UI
-        addMessage(text, "user");
-
-        // Disable UI while processing
-        isProcessing = true;
-        sendBtn.disabled = true;
-        status.textContent = "Processing…";
-
-        ws.send(text);
-        input.value = "";
-    }
-
-    // Submit on Enter (Shift+Enter for newline)
-    input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
-        }
-    });
-
-    // Render existing messages
-    chatHistory.forEach(msg => {
-        const div = document.createElement("div");
-        div.className = `msg ${msg.role}`;
-        div.innerHTML = formatMessage(msg.text);
-        chat.appendChild(div);
-    });
-
-    // Scroll to bottom
-    chat.scrollTop = chat.scrollHeight;
-
-</script>
+    </script>
 
 </body>
 </html>
