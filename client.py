@@ -333,15 +333,15 @@ async def main():
     })
 
     # 3️⃣ Load system prompt
-    SYSTEM_PROMPT_PATH = PROJECT_ROOT / "prompts/tool_usage_guide.md"
+    system_prompt_path = PROJECT_ROOT / "prompts/tool_usage_guide.md"
     system_prompt = """You are a helpful assistant with access to tools.
     When you call a tool and receive a result, use that result to answer the user's question.
     Do not call the same tool repeatedly with the same parameters.
     Provide clear, concise answers based on the tool results."""
 
-    if SYSTEM_PROMPT_PATH.exists():
+    if system_prompt_path.exists():
         logger.warning(f"4️⃣  System prompt found!")
-        system_prompt = SYSTEM_PROMPT_PATH.read_text()
+        system_prompt = system_prompt_path.read_text()
     else:
         logger.warning(f"⚠️  System prompt file not found, using default")
 
