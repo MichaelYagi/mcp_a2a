@@ -11,17 +11,25 @@
             display: flex;
             flex-direction: column;
             height: 90vh;
+            background: #f5f7fa; /* soft background */
+        }
+
+        h1 {
+            color: #2c3e50; /* deep slate */
+            margin-bottom: 1rem;
         }
 
         #chat {
             flex: 1;
-            border: 1px solid #ccc;
+            border: 1px solid #d0d7de;
             padding: 1rem;
             overflow-y: auto;
-            background: #fafafa;
+            background: #ffffff;
             display: flex;
             flex-direction: column;
             gap: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         }
 
         .msg {
@@ -30,16 +38,24 @@
             border-radius: 10px;
             white-space: pre-wrap;
             line-height: 1.4;
+            font-size: 0.95rem;
         }
 
+        /* User bubble: blue gradient */
         .user {
             align-self: flex-end;
-            background: #d0e7ff;
+            background: linear-gradient(135deg, #4da3ff, #1c7dff);
+            color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
         }
 
+        /* Assistant bubble: soft grey with border */
         .assistant {
             align-self: flex-start;
-            background: #e8e8e8;
+            background: #f0f2f5;
+            border: 1px solid #d9d9d9;
+            color: #333;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
 
         #inputRow {
@@ -53,12 +69,32 @@
             height: 60px;
             font-size: 1rem;
             padding: 0.5rem;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
         }
 
+        #input:focus {
+            outline: none;
+            border-color: #4da3ff;
+            box-shadow: 0 0 0 2px rgba(77,163,255,0.3);
+        }
+
+        /* Send button: modern blue */
         #sendBtn {
             padding: 0.5rem 1rem;
             font-size: 1rem;
             cursor: pointer;
+            background: #1c7dff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            transition: background 0.2s ease;
+        }
+
+        #sendBtn:hover {
+            background: #0066e6;
         }
 
         #sendBtn:disabled {
@@ -68,11 +104,11 @@
 
         #status {
             font-style: italic;
-            color: #666;
+            color: #555;
             height: 1.2rem;
             margin-top: 1rem;
         }
-  </style>
+    </style>
 </head>
 <body>
     <h1>MCP Browser Client</h1>
