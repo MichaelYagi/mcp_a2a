@@ -20,6 +20,10 @@ from langgraph.prebuilt import ToolNode
 PROJECT_ROOT = Path(__file__).parent
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
+SYSTEM_PROMPT = """You are a helpful assistant with access to tools.
+    When you call a tool and receive a result, use that result to answer the user's question.
+    Do not call the same tool repeatedly with the same parameters.
+    Provide clear, concise answers based on the tool results."""
 
 # ============================================================================
 # LangGraph State Definition
@@ -146,11 +150,9 @@ def get_venv_python(project_root: Path) -> str:
 
 async def websocket_handler(websocket, agent, system_prompt):
     async for prompt in websocket:
-        # Build the same initial state your CLI loop uses
         initial_messages = [
             HumanMessage(content=system_prompt + "\n\nUser: " + prompt)
         ]
-
         initial_state = {"messages": initial_messages}
 
         result = await agent.ainvoke(initial_state, config={"recursion_limit": 50})
@@ -162,6 +164,64 @@ async def websocket_handler(websocket, agent, system_prompt):
             answer = str(final_message)
 
         await websocket.send(json.dumps({"response": answer}))
+
+async def start_websocket_server(agent, system_prompt):
+    async with websockets.serve(
+        lambda ws: websocket_handler(ws, agent, system_prompt),
+        "localhost",
+        8765
+    ):
+        print("🌐 Browser UI available at ws://localhost:8765")
+        await asyncio.Future()  # run forever
+
+async def cli_loop(agent, system_prompt, logger):
+    print("\n✅ MCP Agent ready with LangGraph. Type a prompt (Ctrl+C to exit).\n")
+
+    # 8️⃣ Interactive loop
+    while True:
+        try:
+            query = input("> ").strip()
+            if not query:
+                continue
+
+            logger.info(f"💬 Received query: '{query}'")
+
+            # Create initial state with system prompt and user query
+            initial_messages = [
+                HumanMessage(content=SYSTEM_PROMPT + "\n\nUser: " + query)
+            ]
+
+            initial_state = {
+                "messages": initial_messages
+            }
+
+            # Configuration with recursion limit
+            config = {
+                "recursion_limit": 50  # Safety net, but should stop naturally now
+            }
+
+            # Run the agent (ASYNC VERSION)
+            logger.info("🏁 Starting agent execution")
+            result = await agent.ainvoke(initial_state, config=config)
+
+            # Extract the final answer
+            final_message = result["messages"][-1]
+
+            if isinstance(final_message, AIMessage):
+                answer = final_message.content
+            else:
+                answer = str(final_message)
+
+            print("\n" + answer + "\n")
+            logger.info("✅ Query completed successfully")
+
+        except KeyboardInterrupt:
+            print("\n👋 Exiting.")
+            break
+
+        except Exception as e:
+            logger.error(f"❌ Error during agent execution: {e}", exc_info=True)
+            print(f"\n❌ Error: {e}\n")
 
 async def main():
     load_dotenv()
@@ -204,14 +264,10 @@ async def main():
 
     # 3️⃣ Load system prompt
     SYSTEM_PROMPT_PATH = PROJECT_ROOT / "prompts/tool_usage_guide.md"
+    logger.warning(f"⚠️  System prompt file not found, using default")
+
     if SYSTEM_PROMPT_PATH.exists():
         SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text()
-    else:
-        SYSTEM_PROMPT = """You are a helpful assistant with access to tools.
-When you call a tool and receive a result, use that result to answer the user's question.
-Do not call the same tool repeatedly with the same parameters.
-Provide clear, concise answers based on the tool results."""
-        logger.warning(f"⚠️  System prompt file not found, using default")
 
     model_name = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
     logger.info(f"🤖 Using model: {model_name}")
@@ -246,66 +302,18 @@ Provide clear, concise answers based on the tool results."""
     # 7️⃣ Create LangGraph agent with stop conditions
     agent = create_langgraph_agent(llm_with_tools, tools)
 
-    async def start_websocket_server():
-        async with websockets.serve(
-                lambda ws: websocket_handler(ws, agent, SYSTEM_PROMPT),
-                "localhost",
-                8765
-        ):
-            print("🌐 WebSocket server running at ws://localhost:8765")
-            await asyncio.Future()  # run forever
+    print("\nChoose interface:")
+    print("1) Browser UI")
+    print("2) CLI")
+    choice = input("> ").strip()
 
-    print("\n🌐 MCP Agent ready. Open your browser UI.\n")
-    await start_websocket_server()
+    if choice == "1":
+        print("🌐 Starting browser UI mode...")
+        await start_websocket_server(agent, SYSTEM_PROMPT)
 
-    # print("\n✅ MCP Agent ready with LangGraph. Type a prompt (Ctrl+C to exit).\n")
-    #
-    # # 8️⃣ Interactive loop
-    # while True:
-    #     try:
-    #         query = input("> ").strip()
-    #         if not query:
-    #             continue
-    #
-    #         logger.info(f"💬 Received query: '{query}'")
-    #
-    #         # Create initial state with system prompt and user query
-    #         initial_messages = [
-    #             HumanMessage(content=SYSTEM_PROMPT + "\n\nUser: " + query)
-    #         ]
-    #
-    #         initial_state = {
-    #             "messages": initial_messages
-    #         }
-    #
-    #         # Configuration with recursion limit
-    #         config = {
-    #             "recursion_limit": 50  # Safety net, but should stop naturally now
-    #         }
-    #
-    #         # Run the agent (ASYNC VERSION)
-    #         logger.info("🏁 Starting agent execution")
-    #         result = await agent.ainvoke(initial_state, config=config)
-    #
-    #         # Extract the final answer
-    #         final_message = result["messages"][-1]
-    #
-    #         if isinstance(final_message, AIMessage):
-    #             answer = final_message.content
-    #         else:
-    #             answer = str(final_message)
-    #
-    #         print("\n" + answer + "\n")
-    #         logger.info("✅ Query completed successfully")
-    #
-    #     except KeyboardInterrupt:
-    #         print("\n👋 Exiting.")
-    #         break
-    #
-    #     except Exception as e:
-    #         logger.error(f"❌ Error during agent execution: {e}", exc_info=True)
-    #         print(f"\n❌ Error: {e}\n")
-
+    else:
+        print("🖥️ Starting CLI mode...")
+        await cli_loop(agent, SYSTEM_PROMPT, logger)
 
 if __name__ == "__main__":
     asyncio.run(main())
