@@ -5,6 +5,7 @@ import requests
 import operator
 import json
 import websockets
+import webbrowser
 
 from typing import TypedDict, Annotated, Sequence
 from mcp_use.client.client import MCPClient
@@ -223,6 +224,20 @@ async def cli_loop(agent, system_prompt, logger):
             logger.error(f"❌ Error during agent execution: {e}", exc_info=True)
             print(f"\n❌ Error: {e}\n")
 
+def open_browser_file(path: Path):
+    import platform
+    import subprocess
+    import webbrowser
+
+    # Detect WSL
+    if "microsoft" in platform.uname().release.lower():
+        # Use Windows default browser via cmd.exe
+        windows_path = str(path).replace("/mnt/c", "C:").replace("/", "\\")
+        subprocess.run(["cmd.exe", "/c", "start", windows_path], shell=False)
+    else:
+        # Normal behavior on macOS/Linux/Windows native
+        webbrowser.open(f"file://{path}")
+
 async def main():
     load_dotenv()
 
@@ -309,6 +324,10 @@ async def main():
 
     if choice == "1":
         print("🌐 Starting browser UI mode...")
+
+        index_path = PROJECT_ROOT / "index.html"
+        open_browser_file(index_path)
+
         await start_websocket_server(agent, SYSTEM_PROMPT)
 
     else:
