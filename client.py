@@ -207,6 +207,9 @@ async def websocket_handler(websocket, agent, system_prompt):
             # Add assistant message
             conversation_state["messages"].append(final_message)
 
+            # PRINT TO BACKEND CLI (same as CLI mode)
+            print("\n" + final_message.content + "\n")
+
             # Send response
             await websocket.send(json.dumps({
                 "type": "assistant_message",
