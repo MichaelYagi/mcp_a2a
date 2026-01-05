@@ -118,31 +118,34 @@
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
 
-        // Backend sends full history
         if (data.type === "history_sync") {
             const history = data.history;
 
-            // If backend has no history, clear localStorage
             if (history.length === 0) {
                 localStorage.removeItem(STORAGE_KEY);
                 chat.innerHTML = "";
                 chatHistory = [];
-                return;
+            } else {
+                chatHistory = history;
+                saveHistory(chatHistory);
+                chat.innerHTML = "";
+                chatHistory.forEach(msg => addMessage(msg.text, msg.role));
             }
 
-            // Replace local history with backend history
-            chatHistory = history;
-            saveHistory(chatHistory);
-
-            // Render UI
-            chat.innerHTML = "";
-            chatHistory.forEach(msg => addMessage(msg.text, msg.role));
+            // Re-enable UI here too
+            isProcessing = false;
+            sendBtn.disabled = false;
+            status.textContent = "";
             return;
         }
 
-        // Normal assistant message
         if (data.type === "assistant_message") {
             addMessage(data.text, "assistant");
+
+            // Re-enable UI
+            isProcessing = false;
+            sendBtn.disabled = false;
+            status.textContent = "";
             return;
         }
     };
