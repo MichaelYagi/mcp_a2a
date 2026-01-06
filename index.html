@@ -130,6 +130,8 @@
         const sendBtn = document.getElementById("sendBtn");
         const status = document.getElementById("status");
 
+        status.textContent = "Connecting";
+
         let isProcessing = false;
         let chatHistory = loadHistory();
 
@@ -172,7 +174,7 @@
                 // Re-enable UI here too
                 isProcessing = false;
                 sendBtn.disabled = false;
-                status.textContent = "";
+                status.textContent = "Connected";
                 return;
             }
 
@@ -182,8 +184,7 @@
                 // Re-enable UI
                 isProcessing = false;
                 sendBtn.disabled = false;
-                status.textContent = "";
-                return;
+                status.textContent = "Connected";
             }
         };
 

@@ -218,10 +218,10 @@ async def websocket_handler(websocket, agent, system_prompt):
 async def start_websocket_server(agent, system_prompt):
     async with websockets.serve(
         lambda ws: websocket_handler(ws, agent, system_prompt),
-        "localhost",
+        "127.0.0.1",
         8765
     ):
-        print("🌐 Browser UI available at ws://localhost:8765")
+        print("🌐 Browser UI available at ws://127.0.0.1:8765")
         await asyncio.Future()  # run forever
 
 async def cli_loop(agent, system_prompt, logger):
