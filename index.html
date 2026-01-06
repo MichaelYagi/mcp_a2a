@@ -138,7 +138,7 @@
     <h1>MCP Browser Client</h1>
 
     <div id="topBar">
-    <label for="modelSelect">Model:</label>
+        <label for="modelSelect">Model:</label>
         <select id="modelSelect">
             <option value="llama3.1:8b">Llama 3.1 8B</option>
             <option value="llama3.1:70b">Llama 3.1 70B</option>
@@ -175,7 +175,6 @@
         // WebSocket connection
         // -------------------------
         const ws = new WebSocket("ws://127.0.0.1:8765");
-
         // -------------------------
         // Local storage helpers
         // -------------------------
@@ -213,6 +212,22 @@
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
+
+            // -------------------------
+            // CLI user message
+            // -------------------------
+            if (data.type === "cli_user_message") {
+                addMessage(data.text, "user");
+                return;
+            }
+
+            // -------------------------
+            // CLI assistant message
+            // -------------------------
+            if (data.type === "cli_assistant_message") {
+                addMessage(data.text, "assistant");
+                return;
+            }
 
             // -------------------------
             // Model switched

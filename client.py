@@ -5,6 +5,9 @@ import requests
 import operator
 import json
 import websockets
+import sys
+import threading
+from queue import Queue
 
 from typing import TypedDict, Annotated, Sequence
 from mcp_use.client.client import MCPClient
@@ -22,6 +25,7 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 # How many messages to keep (user + assistant only)
 MAX_MESSAGE_HISTORY = int(os.getenv("MAX_MESSAGE_HISTORY", "20"))
+
 
 # ============================================================================
 # LangGraph State Definition
@@ -69,6 +73,7 @@ MODEL_STATE_FILE = "last_model.txt"
 
 import subprocess
 
+
 def get_available_models():
     try:
         out = subprocess.check_output(["ollama", "list"], text=True)
@@ -87,14 +92,17 @@ def get_available_models():
         print(f"❌ Could not list models: {e}")
         return []
 
+
 def load_last_model():
     if os.path.exists(MODEL_STATE_FILE):
         return open(MODEL_STATE_FILE).read().strip()
     return None
 
+
 def save_last_model(model_name):
     with open(MODEL_STATE_FILE, "w") as f:
         f.write(model_name)
+
 
 async def switch_model(model_name, tools, logger):
     available = get_available_models()
@@ -118,11 +126,14 @@ async def switch_model(model_name, tools, logger):
     logger.info(f"✅ Model switched to {model_name}")
     return new_agent
 
+
 def list_commands():
     print(":commands - List all available commands")
     print(":model - View the current active model")
     print(":model <model> - Use the model passed")
     print(":models - List available models")
+    print(":interface <cli|web> - Switch interface mode")
+
 
 def create_langgraph_agent(llm_with_tools, tools):
     """
@@ -207,131 +218,168 @@ def get_venv_python(project_root: Path) -> str:
 # ============================================================================
 
 GLOBAL_CONVERSATION_STATE = {"messages": []}
+CONNECTED_WEBSOCKETS = set()  # Track all connected clients
+
+
+async def broadcast_message(message_type, data):
+    """Broadcast a message to all connected WebSocket clients"""
+    if CONNECTED_WEBSOCKETS:
+        message = json.dumps({"type": message_type, **data})
+        await asyncio.gather(
+            *[ws.send(message) for ws in CONNECTED_WEBSOCKETS],
+            return_exceptions=True
+        )
+
 
 async def websocket_handler(websocket, agent_ref, tools, logger):
-    conversation_state = GLOBAL_CONVERSATION_STATE
+    # Add this client to the set of connected clients
+    CONNECTED_WEBSOCKETS.add(websocket)
 
-    async for raw in websocket:
+    try:
+        conversation_state = GLOBAL_CONVERSATION_STATE
 
-        # 1. Ignore empty or whitespace-only messages
-        if not raw or not raw.strip():
-            continue
+        async for raw in websocket:
 
-        # 2. Try to parse JSON; if not JSON, treat as plain user text
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            data = {"type": "user", "text": raw}
+            # 1. Ignore empty or whitespace-only messages
+            if not raw or not raw.strip():
+                continue
 
-        if data.get("type") == "list_models":
-            models = get_available_models()
-            last = load_last_model()
-            await websocket.send(json.dumps({
-                "type": "models_list",
-                "models": models,
-                "last_used": last
-            }))
-            continue
+            # 2. Try to parse JSON; if not JSON, treat as plain user text
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                data = {"type": "user", "text": raw}
 
-        # 3. Browser requests history sync
-        if data.get("type") == "history_request":
-            history_payload = [
-                {"role": "user", "text": m.content} if isinstance(m, HumanMessage)
-                else {"role": "assistant", "text": m.content}
-                for m in conversation_state["messages"]
-            ]
-
-            await websocket.send(json.dumps({
-                "type": "history_sync",
-                "history": history_payload
-            }))
-            continue
-
-        # 4. Browser requests model switch
-        if data.get("type") == "switch_model":
-            model_name = data.get("model")
-
-            # Attempt to switch
-            new_agent = await switch_model(model_name, tools, logger)
-
-            # If switching failed (model not installed)
-            if new_agent is None:
+            if data.get("type") == "list_models":
+                models = get_available_models()
+                last = load_last_model()
                 await websocket.send(json.dumps({
-                    "type": "model_error",
-                    "message": f"Model '{model_name}' is not installed."
+                    "type": "models_list",
+                    "models": models,
+                    "last_used": last
                 }))
                 continue
 
-            # Success — update the agent
-            agent_ref[0] = new_agent
+            # 3. Browser requests history sync
+            if data.get("type") == "history_request":
+                history_payload = [
+                    {"role": "user", "text": m.content} if isinstance(m, HumanMessage)
+                    else {"role": "assistant", "text": m.content}
+                    for m in conversation_state["messages"]
+                ]
 
-            await websocket.send(json.dumps({
-                "type": "model_switched",
-                "model": model_name
-            }))
-            continue
+                await websocket.send(json.dumps({
+                    "type": "history_sync",
+                    "history": history_payload
+                }))
+                continue
 
-        # 5. Normal user message
-        if data.get("type") == "user" or "text" in data:
-            prompt = data.get("text")
+            # 4. Browser requests model switch
+            if data.get("type") == "switch_model":
+                model_name = data.get("model")
 
-            # Add user message
-            conversation_state["messages"].append(
-                HumanMessage(content=prompt)
-            )
+                # Attempt to switch
+                new_agent = await switch_model(model_name, tools, logger)
 
-            # Trim history
-            conversation_state["messages"] = [
-                m for m in conversation_state["messages"]
-                if isinstance(m, (HumanMessage, AIMessage))
-            ][-MAX_MESSAGE_HISTORY:]
+                # If switching failed (model not installed)
+                if new_agent is None:
+                    await websocket.send(json.dumps({
+                        "type": "model_error",
+                        "message": f"Model '{model_name}' is not installed."
+                    }))
+                    continue
 
-            # Run agent (using current model)
-            agent = agent_ref[0]
-            result = await agent.ainvoke(
-                conversation_state,
-                config={"recursion_limit": 50}
-            )
+                # Success — update the agent
+                agent_ref[0] = new_agent
 
-            final_message = result["messages"][-1]
+                await websocket.send(json.dumps({
+                    "type": "model_switched",
+                    "model": model_name
+                }))
+                continue
 
-            # Add assistant message
-            conversation_state["messages"].append(final_message)
+            # 5. Normal user message
+            if data.get("type") == "user" or "text" in data:
+                prompt = data.get("text")
 
-            # PRINT TO BACKEND CLI (same as CLI mode)
-            print("\n" + final_message.content + "\n")
+                # Add user message
+                conversation_state["messages"].append(
+                    HumanMessage(content=prompt)
+                )
 
-            # Send response
-            await websocket.send(json.dumps({
-                "type": "assistant_message",
-                "text": final_message.content
-            }))
+                # Trim history
+                conversation_state["messages"] = [
+                    m for m in conversation_state["messages"]
+                    if isinstance(m, (HumanMessage, AIMessage))
+                ][-MAX_MESSAGE_HISTORY:]
+
+                # Run agent (using current model)
+                agent = agent_ref[0]
+                result = await agent.ainvoke(
+                    conversation_state,
+                    config={"recursion_limit": 50}
+                )
+
+                final_message = result["messages"][-1]
+
+                # Add assistant message
+                conversation_state["messages"].append(final_message)
+
+                # PRINT TO BACKEND CLI (same as CLI mode)
+                print("\n" + final_message.content + "\n")
+
+                # Send response
+                await websocket.send(json.dumps({
+                    "type": "assistant_message",
+                    "text": final_message.content
+                }))
+    finally:
+        # Remove this client when they disconnect
+        CONNECTED_WEBSOCKETS.discard(websocket)
+
 
 async def start_websocket_server(agent, tools, logger):
-    async with websockets.serve(
-        lambda ws: websocket_handler(ws, [agent], tools, logger),
-        "127.0.0.1",
-        8765
-    ):
-        print("🌐 Browser UI available at ws://127.0.0.1:8765")
-        await asyncio.Future()  # run forever
+    """Start the WebSocket server without blocking"""
 
-async def cli_loop(agent, system_prompt, logger, tools, model_name):
-    print("\n✅ MCP Agent ready with LangGraph. Type a prompt (Ctrl+C to exit).\n")
+    async def handler(websocket):
+        try:
+            await websocket_handler(websocket, [agent], tools, logger)
+        except websockets.exceptions.ConnectionClosed:
+            pass
 
-    # Persistent conversation state
-    conversation_state = {"messages": []}
+    server = await websockets.serve(handler, "127.0.0.1", 8765)
+    logger.info("🌐 Browser UI available at ws://127.0.0.1:8765")
+    return server
+
+
+def input_thread(input_queue, stop_event):
+    """Thread to handle blocking input() calls"""
+    while not stop_event.is_set():
+        try:
+            query = input("> ")
+            input_queue.put(query)
+        except (EOFError, KeyboardInterrupt):
+            break
+
+
+async def cli_input_loop(agent, logger, tools, model_name):
+    """Handle CLI input using a separate thread"""
+    conversation_state = GLOBAL_CONVERSATION_STATE
+
+    # Create queue and event for thread communication
+    input_queue = Queue()
+    stop_event = threading.Event()
+
+    # Start input thread
+    thread = threading.Thread(target=input_thread, args=(input_queue, stop_event), daemon=True)
+    thread.start()
 
     def list_models():
         import subprocess, json
 
         try:
-            # Run ollama list (no --json available)
             out = subprocess.check_output(["ollama", "list"], text=True)
-
             lines = out.strip().split("\n")
-
-            # Skip header line
             rows = lines[1:]
 
             parsed = []
@@ -340,11 +388,10 @@ async def cli_loop(agent, system_prompt, logger, tools, model_name):
                 if len(line_parts) < 4:
                     continue
 
-                # NAME may contain no spaces → safe to take line_parts[0]
                 name = line_parts[0]
                 model_id = line_parts[1]
                 size = line_parts[2]
-                modified = " ".join(line_parts[3:])  # e.g. "15 hours ago"
+                modified = " ".join(line_parts[3:])
 
                 parsed.append({
                     "name": name,
@@ -353,7 +400,6 @@ async def cli_loop(agent, system_prompt, logger, tools, model_name):
                     "modified": modified
                 })
 
-            # Convert to JSON string so json.loads() works
             json_str = json.dumps(parsed)
             models = json.loads(json_str)
 
@@ -365,88 +411,86 @@ async def cli_loop(agent, system_prompt, logger, tools, model_name):
         except Exception as e:
             print(f"❌ Could not list models: {e}")
 
-    while True:
-        try:
-            query = input("> ").strip()
-            if not query:
-                continue
+    try:
+        while True:
+            # Check for input from the queue
+            await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
 
-            if query == ":commands":
-                list_commands()
-                continue
+            if not input_queue.empty():
+                query = input_queue.get().strip()
 
-            # -------------------------
-            # MODEL SWITCH COMMAND
-            # -------------------------
-
-            # 1. Exact match for listing models
-            if query == ":models":
-                list_models()
-                continue
-
-            # 2. Model switching command
-            if query.startswith(":model "):  # note the space!
-                parts = query.split(maxsplit=1)
-                if len(parts) == 1:
-                    print("Usage: :model <model_name>")
+                if not query:
                     continue
 
-                model_name = parts[1]
-                new_agent = await switch_model(model_name, tools, logger)
-                if new_agent is None:
+                if query == ":commands":
+                    list_commands()
                     continue
 
-                agent = new_agent
-                model_name = model_name  # update current model
-                print(f"🤖 Model switched to {model_name}\n")
+                if query == ":models":
+                    list_models()
+                    continue
 
-                continue
+                if query.startswith(":model "):
+                    parts = query.split(maxsplit=1)
+                    if len(parts) == 1:
+                        print("Usage: :model <model_name>")
+                        continue
 
-            # 3. If user typed ":model" with no argument
-            if query == ":model":
-                print(f"Using model: {model_name}\n")
-                continue
+                    model_name = parts[1]
+                    new_agent = await switch_model(model_name, tools, logger)
+                    if new_agent is None:
+                        continue
 
-            # -------------------------
-            # NORMAL CHAT
-            # -------------------------
-            logger.info(f"💬 Received query: '{query}'")
+                    agent = new_agent
+                    print(f"🤖 Model switched to {model_name}\n")
+                    continue
 
-            conversation_state["messages"].append(
-                HumanMessage(content=query)
-            )
+                if query == ":model":
+                    print(f"Using model: {model_name}\n")
+                    continue
 
-            # Trim history
-            conversation_state["messages"] = [
-                m for m in conversation_state["messages"]
-                if isinstance(m, (HumanMessage, AIMessage))
-            ][-MAX_MESSAGE_HISTORY:]
+                # Normal chat
+                logger.info(f"💬 Received query: '{query}'")
 
-            logger.info("🏁 Starting agent execution")
-            result = await agent.ainvoke(
-                conversation_state,
-                config={"recursion_limit": 50}
-            )
+                conversation_state["messages"].append(
+                    HumanMessage(content=query)
+                )
 
-            final_message = result["messages"][-1]
-            conversation_state["messages"].append(final_message)
+                # Broadcast user message to web clients
+                await broadcast_message("cli_user_message", {"text": query})
 
-            answer = (
-                final_message.content
-                if isinstance(final_message, AIMessage)
-                else str(final_message)
-            )
+                # Trim history
+                conversation_state["messages"] = [
+                    m for m in conversation_state["messages"]
+                    if isinstance(m, (HumanMessage, AIMessage))
+                ][-MAX_MESSAGE_HISTORY:]
 
-            print("\n" + answer + "\n")
-            logger.info("✅ Query completed successfully")
+                logger.info("🏁 Starting agent execution")
+                result = await agent.ainvoke(
+                    conversation_state,
+                    config={"recursion_limit": 50}
+                )
 
-        except KeyboardInterrupt:
-            print("\n👋 Exiting.")
-            break
+                final_message = result["messages"][-1]
+                conversation_state["messages"].append(final_message)
 
-        except Exception as e:
-            logger.error(f"❌ Error during agent execution: {e}", exc_info=True)
-            print(f"\n❌ Error: {e}\n")
+                answer = (
+                    final_message.content
+                    if isinstance(final_message, AIMessage)
+                    else str(final_message)
+                )
+
+                print("\n" + answer + "\n")
+                logger.info("✅ Query completed successfully")
+
+                # Broadcast assistant message to web clients
+                await broadcast_message("cli_assistant_message", {"text": answer})
+
+    except KeyboardInterrupt:
+        print("\n👋 Exiting.")
+    finally:
+        stop_event.set()
+
 
 def open_browser_file(path: Path):
     import platform
@@ -461,6 +505,7 @@ def open_browser_file(path: Path):
     else:
         # Normal behavior on macOS/Linux/Windows native
         webbrowser.open(f"file://{path}")
+
 
 async def main():
     load_dotenv()
@@ -550,24 +595,34 @@ async def main():
     # 7️⃣ Create LangGraph agent with stop conditions
     agent = create_langgraph_agent(llm_with_tools, tools)
 
-    print("\nChoose interface:")
-    print("1) Browser")
-    print("2) CLI")
-    choice = input("> ").strip()
+    # Start both interfaces simultaneously
+    print("\n🚀 Starting MCP Agent with dual interface support")
+    print("=" * 60)
 
-    if choice == "1":
-        print("🌐 Starting browser UI mode...")
+    # Open browser
+    index_path = PROJECT_ROOT / "index.html"
+    open_browser_file(index_path)
 
-        index_path = PROJECT_ROOT / "index.html"
-        open_browser_file(index_path)
+    # Start WebSocket server (non-blocking)
+    websocket_server = await start_websocket_server(agent, tools, logger)
 
-        await start_websocket_server(agent, tools, logger)
+    print("🖥️  CLI interface ready")
+    print("🌐 Browser interface ready at http://localhost:8765")
+    print("=" * 60)
+    print("\nBoth interfaces share the same conversation state!")
+    print("Commands:")
+    list_commands()
+    print()
 
-    else:
-        print("🖥️ Starting CLI mode...")
-        print("Commands:")
-        list_commands()
-        await cli_loop(agent, system_prompt, logger, tools, model_name)
+    # Run CLI input loop (this will block until Ctrl+C)
+    try:
+        await cli_input_loop(agent, logger, tools, model_name)
+    except KeyboardInterrupt:
+        print("\n👋 Shutting down...")
+    finally:
+        websocket_server.close()
+        await websocket_server.wait_closed()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

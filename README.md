@@ -113,25 +113,18 @@ ollama pull llama3.1:8b
 python client.py
 ```
 
-### Interface Modes
+### Interface
 
-Choose your interaction mode when starting:
-
-* **CLI Mode**: Terminal-based with full logs, ideal for debugging
-* **Browser Mode**: WebSocket server with chat UI and persistent history
-
-```
-Choose interface:
-1) Browser
-2) CLI
-```
-
-Both modes use the same backend and tools.
+You can use a CLI terminal-based with full logs, ideal for debugging or visit the index.html page with chat UI and persistent history.
 
 ### Configuration
 
-**Conversation History:**
-**Alternative Models:**  
+**Conversation History**
+
+Make changes to the message history size. Make a `.env` file if not already there and make an entry `MAX_MESSAGE_HISTORY=<numebr>`. The default is 20.
+
+**Alternative Models:**
+
 Browse models at [ollama.com/library](https://ollama.com/library). Use models with advertised tool support:
 
 ```
