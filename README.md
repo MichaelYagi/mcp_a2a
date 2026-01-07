@@ -178,7 +178,11 @@ Edit `%APPDATA%\Roaming\Claude\claude_desktop_config.json` with **absolute paths
 }
 ```
 
-Run: `python server.py`
+Run:
+
+`.venv\Scripts\activate`
+
+`.venv\Scripts\python.exe server.py`
 
 ---
 
