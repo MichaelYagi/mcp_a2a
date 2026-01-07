@@ -571,15 +571,19 @@ async def main():
     Provide clear, concise answers based on the tool results."""
 
     if system_prompt_path.exists():
-        logger.info(f"4️⃣  System prompt found!")
+        logger.info(f"⚙️ System prompt found!")
         system_prompt = system_prompt_path.read_text(encoding="utf-8")
     else:
         logger.warning(f"⚠️  System prompt file not found, using default")
 
     model_name = "llama3.1:8b"
     last = load_last_model()
-    if last is not None and last != model_name:
+    available = get_available_models()
+
+    if last is not None and last != model_name and last in available:
         model_name = last
+
+    save_last_model(model_name)
     logger.info(f"🤖 Using model: {model_name}")
 
     await ensure_ollama_running()
