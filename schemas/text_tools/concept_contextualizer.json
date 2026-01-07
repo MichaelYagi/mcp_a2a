@@ -1,0 +1,18 @@
+{
+  "name": "concept_contextualizer",
+  "description": "Provides the big-picture context of a concept: why it matters, what problem it solves, and how it fits into a larger system.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "concept": {
+        "type": "string",
+        "description": "The concept or idea to contextualize."
+      }
+    },
+    "required": ["concept"]
+  },
+  "output_schema": {
+    "type": "string",
+    "description": "JSON string containing contextual information about the concept."
+  }
+}

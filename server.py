@@ -58,6 +58,8 @@ from tools.text_tools.summarize_chunk import summarize_chunk
 from tools.text_tools.merge_summaries import merge_summaries
 from tools.text_tools.summarize_text import summarize_text
 from tools.text_tools.summarize_direct import summarize_direct
+from tools.text_tools.explain_simplified import explain_simplified
+from tools.text_tools.concept_contextualizer import concept_contextualizer
 # ─────────────────────────────────────────────
 # RAG Tools
 # ─────────────────────────────────────────────
@@ -598,6 +600,27 @@ def summarize_direct_tool(text: str, style: str = "medium") -> str:
     Prepare text for direct summarization in a single LLM call.
     """
     return json.dumps(summarize_direct(text, style))
+
+@mcp.tool()
+def explain_simplified_tool(concept: str) -> str:
+    """
+    MCP-exposed tool that returns a JSON string.
+    Produce a structured, simple explanation of a complex concept
+    using the Ladder of Abstraction:
+    1. Analogy
+    2. Simple explanation
+    3. Technical definition
+    """
+    result = explain_simplified(concept)
+    return json.dumps(result)
+
+@mcp.tool()
+def concept_contextualizer_tool(concept: str) -> str:
+    """
+    MCP-exposed tool that returns a JSON string.
+    """
+    result = concept_contextualizer(concept)
+    return json.dumps(result)
 
 # ─────────────────────────────────────────────
 # RAG Tools
