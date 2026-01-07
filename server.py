@@ -4,6 +4,7 @@ from mcp.server.fastmcp import FastMCP
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any
+import logging
 
 # Load environment variables from .env file
 PROJECT_ROOT = Path(__file__).parent
@@ -74,6 +75,21 @@ from tools.plex.semantic_media_search import semantic_media_search
 from tools.plex.scene_locator import scene_locator
 
 mcp = FastMCP("MCP server")
+PROJECT_ROOT = Path(__file__).resolve().parent
+LOG_DIR = Path(str(PROJECT_ROOT / "logs"))
+LOG_DIR.mkdir(exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_DIR / "mcp-server.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ],
+)
+
+# If you want to see exactly what the MCP Server is saying
+logging.getLogger("mcp").setLevel(logging.DEBUG)
+logger = logging.getLogger("mcp_server")
 
 @mcp.tool()
 def add_entry(title: str, content: str, tags: List[str] | None = None) -> str:
@@ -86,6 +102,7 @@ def add_entry(title: str, content: str, tags: List[str] | None = None) -> str:
 
     Use this tool whenever the user wants to save information, notes, summaries, or structured knowledge.
     """
+    logger.info(f"🛠 [server] add_entry called with title: {title}, content: {content}, tags: {tags}")
     tags = tags or []
     result = kb_add(title, content, tags)
     return json.dumps(result) # MUST be a string
@@ -100,6 +117,7 @@ def search_entries(query: str) -> str:
 
     Use this tool when the user asks to find information, look something up, or retrieve entries by content.
     """
+    logger.info(f"🛠 [server] search_entries called with query: {query}")
     results = kb_search(query)
     # Even if results is an empty list [], json.dumps makes it a string "[]"
     return json.dumps(results, indent=2)
@@ -111,6 +129,7 @@ def search_by_tag(tag: str) -> str:
 
     Use this tool when the user asks for entries grouped by topic, category, or label.
     """
+    logger.info(f"🛠 [server] search_by_tag called with tag: {tag}")
     result = kb_search_tags(tag)
     return json.dumps(result, indent=2)
 
@@ -124,6 +143,7 @@ def search_semantic(query: str, top_k: int = 5) -> str:
 
     Use this tool when the user asks for related ideas, similar content, or concept‑level matches.
     """
+    logger.info(f"🛠 [server] search_semantic called with query: {query}")
     result = kb_search_semantic(query, top_k)
     return json.dumps(result, indent=2)
 
@@ -134,6 +154,7 @@ def get_entry(entry_id: str) -> str:
 
     Use this tool when the user wants to view, inspect, or reference a specific saved entry.
     """
+    logger.info(f"🛠 [server] get_entry called with entry_id: {entry_id}")
     result = kb_get(entry_id)
     return json.dumps(result)
 
@@ -144,6 +165,7 @@ def delete_entry(entry_id: str) -> str:
 
     Use this tool when the user wants to remove or clean up a specific entry.
     """
+    logger.info(f"🛠 [server] delete_entry called with entry_id: {entry_id}")
     result = kb_delete(entry_id)
     return json.dumps(result)
 
@@ -157,6 +179,7 @@ def delete_entries(entry_ids: List[str]) -> str:
 
     Use this tool for bulk cleanup or batch deletion.
     """
+    logger.info(f"🛠 [server] delete_entries called with entry_ids: {entry_ids}")
     result = kb_delete_many(entry_ids)
     return json.dumps(result, indent=2)
 
@@ -173,6 +196,7 @@ def update_entry(entry_id: str,
 
     Use this tool when the user wants to revise, correct, or expand an entry.
     """
+    logger.info(f"🛠 [server] update_entry called with entry_id: {entry_id}, title: {title}, content: {content}, tags: {tags}")
     result = kb_update(entry_id, title, content, tags)
     return json.dumps(result, indent=2)
 
@@ -183,6 +207,7 @@ def list_entries() -> str:
 
     Use this tool when the user wants an overview, index, or inventory of stored information.
     """
+    logger.info(f"🛠 [server] list_entries called")
     result = kb_list()
     return json.dumps(result, indent=2)
 
@@ -199,6 +224,7 @@ def update_entry_versioned(entry_id: str,
 
     Use this tool when the user wants safe, versioned edits or audit‑friendly changes.
     """
+    logger.info(f"🛠 [server] update_entry_versioned called with entry_id: {entry_id}, title: {title}, content: {content}, tags: {tags}")
     result = kb_update_versioned(entry_id, title, content, tags)
     return json.dumps(result, indent=2)
 
@@ -215,6 +241,7 @@ def get_system_info() -> str:
 
     Use this tool when the user asks about system performance, diagnostics, or machine status.
     """
+    logger.info(f"🛠 [server] get_system_info called")
     return get_system_stats()
 
 @mcp.tool()
@@ -227,6 +254,7 @@ def list_system_processes(top_n: int = 10) -> str:
 
     Use this tool when the user asks what is running or wants to inspect system activity.
     """
+    logger.info(f"🛠 [server] list_system_processes called with top_n: {top_n}")
     return list_processes(top_n)
 
 @mcp.tool()
@@ -236,6 +264,7 @@ def terminate_process(pid: int) -> str:
 
     Use this tool when the user explicitly requests to stop or kill a specific process.
     """
+    logger.info(f"🛠 [server] terminate_process called with pid: {pid}")
     return kill_process(pid)
 
 # ─────────────────────────────────────────────
@@ -253,6 +282,7 @@ def add_todo_item(title: str,
 
     Use this tool when the user wants to track tasks, reminders, or deadlines.
     """
+    logger.info(f"🛠 [server] add_todo_item called with title: {title}, description: {description}, due_date: {due_by}")
     result = add_todo(title, description, due_by)
     return json.dumps(result, indent=2)
 
@@ -263,6 +293,7 @@ def list_todo_items() -> str:
 
     Use this tool when the user wants an overview of their tasks or reminders.
     """
+    logger.info(f"🛠 [server] list_todo_items called")
     result = list_todos()
     return json.dumps(result, indent=2)
 
@@ -281,6 +312,7 @@ def search_todo_items(text: Optional[str] = None,
 
     Use this tool when the user wants to find, filter, or organize tasks.
     """
+    logger.info(f"🛠 [server] search_todo_items called with text: {text}, status: {status}, due_before: {due_before}, due_after: {due_after}")
     result = search_todos(
         text=text,
         status=status,
@@ -305,6 +337,7 @@ def update_todo_item(todo_id: str,
 
     Use this tool when the user wants to modify or correct a task.
     """
+    logger.info(f"🛠 [server] update_todo_item called with todo_id: {todo_id}, title: {title}, description: {description}, status: {status}, due_date: {due_by}")
     result = update_todo(todo_id, title, description, status, due_by)
     return json.dumps(result, indent=2)
 
@@ -315,6 +348,7 @@ def delete_todo_item(todo_id: str) -> str:
 
     Use this tool when the user wants to remove a specific task.
     """
+    logger.info(f"🛠 [server] delete_todo_item called with todo_id: {todo_id}")
     result = delete_todo(todo_id)
     return json.dumps(result, indent=2)
 
@@ -328,6 +362,7 @@ def delete_all_todo_items() -> str:
 
     Use this tool when the user wants to clear their entire task list.
     """
+    logger.info(f"🛠 [server] delete_all_todo_items called")
     deleted_ids = delete_all_todos()
     result = {
         "deleted_count": len(deleted_ids),
@@ -353,6 +388,7 @@ def summarize_code_file(path: str, max_bytes: int = 200_000) -> str:
 
     Use this tool when the user wants to summarize or review a specific code file.
     """
+    logger.info(f"🛠 [server] summarize_code_file called with path: {path}, max_bytes: {max_bytes}")
     from pathlib import Path
     import json
 
@@ -427,6 +463,7 @@ def search_code_in_directory(
         extension: Filter by file type (e.g., 'py', 'js').
         directory: The folder to start searching from.
     """
+    logger.info(f"🛠 [server] search_code_in_directory called with query: {query}, extension: {extension}, directory: {directory}")
     # Call the logic function
     result = search_code(query, extension, directory)
 
@@ -442,6 +479,7 @@ def scan_code_directory(path: str) -> str:
 
     Use this tool when the user wants an overview of a codebase or folder.
     """
+    logger.info(f"🛠 [server] scan_code_directory called with path: {path}")
     result = scan_directory(path)
     return json.dumps(result, indent=2)
 
@@ -454,6 +492,7 @@ def summarize_code() -> str:
 
     Use this tool when the user wants a broad overview of the project.
     """
+    logger.info(f"🛠 [server] summarize_code called")
     result = summarize_codebase()
     return json.dumps(result, indent=2)
 
@@ -470,6 +509,7 @@ def debug_fix(error_message: str,
 
     Use this tool when the user wants help diagnosing or fixing code issues.
     """
+    logger.info(f"🛠 [server] debug_fix called with error_message: {error_message}, stack_trace: {stack_trace}, code_snippet: {code_snippet}, environment: {environment}")
     result = fix_bug(
         error_message=error_message,
         stack_trace=stack_trace,
@@ -499,6 +539,7 @@ def get_location_tool(city: str | None = None, state: str | None = None, country
 
     Always call this tool directly without asking the user for timezone or coordinates.
     """
+    logger.info(f"🛠 [server] get_location_tool called with city: {city}, state: {state}, country: {country}")
     if not city and CLIENT_IP:
         loc = geolocate_ip(CLIENT_IP)
         if loc:
@@ -525,6 +566,7 @@ def get_time_tool(city: str | None = None, state: str | None = None, country: st
 
     Do NOT ask the user for timezone — the server handles it automatically.
     """
+    logger.info(f"🛠 [server] get_time_tool called with city: {city}, state: {state}, country: {country}")
     if not city and CLIENT_IP:
         loc = geolocate_ip(CLIENT_IP)
         if loc:
@@ -549,9 +591,7 @@ def get_weather_tool(city: str | None = None, state: str | None = None, country:
 
     Never put a province or state into the country field.
     """
-    # DEBUG logging
-    import logging
-    logger = logging.getLogger(__name__)
+    logger.info(f"🛠 [server] get_weather_tool called with city: {city}, state: {state}, country: {country}")
     logger.info(f"🌤️  get_weather_tool called with: city={city}, state={state}, country={country}")
     logger.info(f"🌤️  CLIENT_IP = {CLIENT_IP}")
 
@@ -578,20 +618,24 @@ def get_weather_tool(city: str | None = None, state: str | None = None, country:
 
 @mcp.tool()
 def split_text_tool(text: str, max_chunk_size: int = 2000) -> str:
+    logger.info(f"🛠 [server] split_text_tool called with text: {text}, max_chunk_size: {max_chunk_size}")
     return json.dumps(split_text(text, max_chunk_size))
 
 @mcp.tool()
 def summarize_chunk_tool(chunk: str, style: str = "short") -> str:
+    logger.info(f"🛠 [server] summarize_chunk_tool called with chunk: {chunk}, style: {style}")
     return json.dumps(summarize_chunk(chunk, style))
 
 @mcp.tool()
 def merge_summaries_tool(summaries: List[str], style: str = "medium") -> str:
+    logger.info(f"🛠 [server] merge_summaries_tool called with summaries: {summaries}, style: {style}")
     return json.dumps(merge_summaries(summaries, style))
 
 @mcp.tool()
 def summarize_text_tool(text: str | None = None,
                         file_path: str | None = None,
                         style: str = "medium") -> str:
+    logger.info(f"🛠 [server] summarize_text_tool called with text: {text}, file_path: {file_path}, style: {style}")
     return json.dumps(summarize_text(text, file_path, style))
 
 @mcp.tool()
@@ -599,6 +643,7 @@ def summarize_direct_tool(text: str, style: str = "medium") -> str:
     """
     Prepare text for direct summarization in a single LLM call.
     """
+    logger.info(f"🛠 [server] summarize_direct_tool called with text: {text}, style: {style}")
     return json.dumps(summarize_direct(text, style))
 
 @mcp.tool()
@@ -611,6 +656,7 @@ def explain_simplified_tool(concept: str) -> str:
     2. Simple explanation
     3. Technical definition
     """
+    logger.info(f"🛠 [server] explain_simplified_tool called with concept: {concept}")
     result = explain_simplified(concept)
     return json.dumps(result)
 
@@ -619,6 +665,7 @@ def concept_contextualizer_tool(concept: str) -> str:
     """
     MCP-exposed tool that returns a JSON string.
     """
+    logger.info(f"🛠 [server] concept_contextualizer_tool called with concept: {concept}")
     result = concept_contextualizer(concept)
     return json.dumps(result)
 
@@ -627,14 +674,17 @@ def concept_contextualizer_tool(concept: str) -> str:
 # ─────────────────────────────────────────────
 @mcp.tool()
 def chunk_text_tool(text: str, max_chunk_size: int = 500):
+    logger.info(f"🛠 [server] chunk_text_tool called with text: {text}, max_chunk_size: {max_chunk_size}")
     return chunk_text(text, max_chunk_size)
 
 @mcp.tool()
 def embed_text_tool(texts: list[str]):
+    logger.info(f"🛠 [server] embed_text_tool called with texts: {texts}")
     return embed_text(texts)
 
 @mcp.tool()
 def vector_search_tool(query: str, top_k: int = 5):
+    logger.info(f"🛠 [server] vector_search_tool called with query: {query}, top_k: {top_k}")
     return vector_search(query, top_k)
 
 @mcp.tool()
@@ -648,7 +698,7 @@ def rag_ingest_text(doc_id: str, text: str) -> str:
 
     Use this tool when the user wants to add new knowledge to the RAG system.
     """
-
+    logger.info(f"🛠 [server] rag_ingest_text called with doc_id: {doc_id}, text: {text}")
     # Basic validation
     if not isinstance(doc_id, str) or not doc_id.strip():
         return json.dumps({
@@ -695,6 +745,7 @@ def semantic_media_search_text(query: str, limit: int = 10) -> Dict[str, Any]:
         - year: Release year
         - score: Search relevance score
     """
+    logger.info(f"🛠 [server] semantic_media_search called with query: {query}, limit: {limit}")
     return semantic_media_search(query=query, limit=limit)
 
 @mcp.tool()
@@ -720,6 +771,7 @@ def scene_locator_tool(media_id: str, query: str, limit: int = 5):
     Returns:
         List of matching scenes with timestamps and subtitle text
     """
+    logger.info(f"🛠 [server] scene_locator_tool called with media_id: {media_id}, query: {query}, limit: {limit}")
     return scene_locator(media_id=media_id, query=query, limit=limit)
 
 @mcp.tool()
@@ -738,6 +790,7 @@ def find_scene_by_title(movie_title: str, scene_query: str, limit: int = 5):
     Returns:
         Matching scenes with timestamps
     """
+    logger.info(f"🛠 [server] find_scene_by_title called with movie_title: {movie_title}, query: {scene_query}, limit: {limit}")
     # Step 1: Search for the movie
     search_results = semantic_media_search(query=movie_title, limit=1)
 
@@ -758,4 +811,5 @@ def find_scene_by_title(movie_title: str, scene_query: str, limit: int = 5):
     }
 
 if __name__ == "__main__":
+    logger.info(f"🛠 [server] mcp server running with stdio enabled")
     mcp.run(transport="stdio")

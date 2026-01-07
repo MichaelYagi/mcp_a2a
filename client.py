@@ -71,13 +71,13 @@ def should_continue(state: AgentState) -> str:
     if isinstance(last_message, AIMessage):
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             tool_calls = last_message.tool_calls
-            logging.getLogger("mcp_use").info(f"🔄 Continuing - found {len(tool_calls)} tool call(s)")
+            logging.getLogger("mcp_client").info(f"🔄 Continuing - found {len(tool_calls)} tool call(s)")
             for call in tool_calls:
-                logging.getLogger("mcp_use").info(f" ↳ Tool: {call['name']} Args: {call.get('args')}")
+                logging.getLogger("mcp_client").info(f" ↳ Tool: {call['name']} Args: {call.get('args')}")
             return "continue"
 
     # Otherwise, we're done
-    logging.getLogger("mcp_use").info("✅ Stopping - no more tool calls, returning final answer")
+    logging.getLogger("mcp_client").info("✅ Stopping - no more tool calls, returning final answer")
     return "end"
 
 
@@ -160,7 +160,7 @@ def create_langgraph_agent(llm_with_tools, tools):
     Returns:
         Compiled graph ready to execute
     """
-    logger = logging.getLogger("mcp_use")
+    logger = logging.getLogger("mcp_client")
 
     # Define the agent node
     async def call_model(state: AgentState):
@@ -334,26 +334,30 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
             if data.get("type") == "user" or "text" in data:
                 prompt = data.get("text")
 
-                # Add user message
-                conversation_state["messages"].append(
-                    HumanMessage(content=prompt)
-                )
+                # Show user prompt in CLI
+                print(f"\n> {prompt}")
 
-                # Trim history
-                conversation_state["messages"] = [
-                    m for m in conversation_state["messages"]
-                    if isinstance(m, (HumanMessage, AIMessage, SystemMessage))
-                ][-MAX_MESSAGE_HISTORY:]
+                # Send user prompt to Web UI
+                await websocket.send(json.dumps({
+                    "type": "user_message",
+                    "text": prompt
+                }))
 
-                # Run agent (using current model)
+                # Run agent
                 agent = agent_ref[0]
-                answer = await run_agent(agent, conversation_state, prompt, logger)
+                result = await run_agent(agent, conversation_state, prompt, logger)
 
-                print("\n" + answer + "\n")
+                # Extract assistant message
+                final_message = result["messages"][-1]
+                assistant_text = final_message.content
 
+                # Print assistant response to CLI
+                print("\n" + assistant_text + "\n")
+
+                # Send assistant response to Web UI
                 await websocket.send(json.dumps({
                     "type": "assistant_message",
-                    "text": answer
+                    "text": assistant_text
                 }))
     finally:
         # Remove this client when they disconnect
@@ -384,44 +388,28 @@ def input_thread(input_queue, stop_event):
             break
 
 async def run_agent(agent, conversation_state, user_message, logger):
-    """
-    Unified agent invocation for both CLI and WebSocket.
-    Ensures consistent system prompt injection, state management, and tool execution.
-    """
-
-    # 1. Inject system prompt ONCE
     if not conversation_state["messages"]:
         conversation_state["messages"].append(
             SystemMessage(content=SYSTEM_PROMPT)
         )
 
-    # 2. Add user message
     conversation_state["messages"].append(
         HumanMessage(content=user_message)
     )
 
-    # 3. Trim history (keep all message types except tool messages)
     conversation_state["messages"] = [
         m for m in conversation_state["messages"]
         if m.type != "tool"
     ][-MAX_MESSAGE_HISTORY:]
 
-    # 4. Invoke LangGraph correctly (NO agent[0]!)
     logger.info(f"🧠 Calling LLM with {len(conversation_state['messages'])} messages")
 
     result = await agent.ainvoke({"messages": conversation_state["messages"]})
 
-    # 5. Extract final message
     final_message = result["messages"][-1]
-
-    # 6. Update conversation state
     conversation_state["messages"].append(final_message)
 
-    # 7. Return final answer text
-    if isinstance(final_message, AIMessage):
-        return final_message.content or ""
-    else:
-        return str(final_message)
+    return result
 
 async def cli_input_loop(agent, logger, tools, model_name):
     """Handle CLI input using a separate thread"""
@@ -513,15 +501,25 @@ async def cli_input_loop(agent, logger, tools, model_name):
                 # Normal chat
                 logger.info(f"💬 Received query: '{query}'")
 
-                # Run unified agent pipeline
-                answer = await run_agent(agent, conversation_state, query, logger)
+                # 1. Print user prompt to CLI
+                print(f"\n> {query}")
 
-                # Print to CLI
-                print("\n" + answer + "\n")
+                # 2. Broadcast user prompt to Web UI
+                await broadcast_message("cli_user_message", {"text": query})
+
+                # 3. Run unified agent pipeline (returns FULL LangGraph result)
+                result = await run_agent(agent, conversation_state, query, logger)
+
+                # 4. Extract assistant message
+                final_message = result["messages"][-1]
+                assistant_text = final_message.content
+
+                # 5. Print assistant response to CLI
+                print("\n" + assistant_text + "\n")
                 logger.info("✅ Query completed successfully")
 
-                # Broadcast to web clients
-                await broadcast_message("cli_assistant_message", {"text": answer})
+                # 6. Broadcast assistant response to Web UI
+                await broadcast_message("cli_assistant_message", {"text": assistant_text})
 
     except KeyboardInterrupt:
         print("\n👋 Exiting.")
@@ -567,7 +565,7 @@ async def main():
     # If you want to see exactly what the MCP Server is saying to the Client
     logging.getLogger("mcp").setLevel(logging.DEBUG)
 
-    logger = logging.getLogger("mcp_use")
+    logger = logging.getLogger("mcp_client")
 
     # 2️⃣ MCP Server config
     client = MCPClient.from_dict({
@@ -598,7 +596,7 @@ async def main():
     available_count = len(available)
 
     if available_count == 0:
-        print("❌ No models available. Download models using `ollama pull <model>`. Exiting.")
+        print("❌ No models available. Download models using `ollama pull <model>` and run `ollama serve`. Exiting.")
         sys.exit(1)
 
     if last is not None and last != model_name and last in available:
