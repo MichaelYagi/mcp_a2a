@@ -133,9 +133,14 @@ ollama pull llama3.1:8b
 
 **3. Start the client:**
 
+Linux
 ```
-python client.py (Linux)
-.\.venv\Scripts\python.exe client.py (Windows)
+python client.py
+```
+
+Windows PowerShell
+```
+.venv\Scripts\python.exe client.py
 ```
 
 ### Interface
@@ -185,5 +190,6 @@ Three steps to add new tools:
 2. **Schema**: Define inputs in `schemas/<new_domain>/<tool_name>.json`
 
 3. **Register**: Import in `server.py` and wrap with `@mcp.tool()`
+
 
 
