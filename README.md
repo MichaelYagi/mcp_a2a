@@ -22,7 +22,7 @@ The server is plug-and-play—add new capabilities by simply dropping modules in
 * **Client (client.py)**: AI agent that connects to the server and invokes tools
 * **Server (server.py)**: Hub that registers tools and provides JSON-RPC interface
 * **Tools Directory**: Functional Python logic for each domain with local persistence
-* **Schemas Directory**: Input contracts between AI and code
+* **Schemas Directory**: Input contracts (prompts) between AI and code
 
 ---
 
@@ -31,17 +31,17 @@ The server is plug-and-play—add new capabilities by simply dropping modules in
 ```
 mcp-server/
 │
-├── server.py                 # Core hub; registers and exposes tools
-├── client.py                 # AI Agent (powered by Qwen)
+├── server.py                 # Registers and exposes tools and prompts (schemas)
+├── client.py                 # AI Agent, interprets requests, and decides when to call tools
 │
-├── tools/
+├── tools/                    # Python tools - defines tools
 │   ├── knowledge_base/       # Structured data & search
 │   │   └── kb_add.py
 │   ├── location/             # External API integration
 │   │   └── get_weather.py
 │   └── more_tools/
 │
-├── schemas/                  # JSON schemas for tool inputs
+├── schemas/                  # JSON schemas for tool inputs - defines prompts
 │   ├── knowledge_base/       
 │   │   └── kb_add.json
 │   ├── location/             
