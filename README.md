@@ -78,6 +78,8 @@ mcp-server/
 
 **1. Install dependencies**
 
+From the `mcp_server` root:
+
 ```
 curl -fsSL https://ollama.com/install.sh | sh
 python -m venv .venv
@@ -183,3 +185,4 @@ Three steps to add new tools:
 2. **Schema**: Define inputs in `schemas/<new_domain>/<tool_name>.json`
 
 3. **Register**: Import in `server.py` and wrap with `@mcp.tool()`
+
