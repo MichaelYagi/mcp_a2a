@@ -146,6 +146,7 @@ async def switch_model(model_name, tools, logger):
 def list_commands():
     print(":commands - List all available commands")
     print(":tools - List all available tools")
+    print(":tool <tool> - Get the tool description")
     print(":model - View the current active model")
     print(":model <model> - Use the model passed")
     print(":models - List available models")
@@ -424,10 +425,20 @@ async def cli_input_loop(agent, logger, tools, model_name):
     thread = threading.Thread(target=input_thread, args=(input_queue, stop_event), daemon=True)
     thread.start()
 
+    def tool_description(tools_obj, tool_name):
+        found=False
+        for t in tools_obj:
+            if t.name == tool_name:
+                logger.info(f"  - {t.description}")
+                found=True
+                break
+        if not found:
+            logger.info(f"❌ MCP tool {tool_name} not found")
+
     def list_tools(tools_obj):
         logger.info(f"🛠 Found {len(tools_obj)} MCP tools:")
         for t in tools_obj:
-            logger.info(f"  - {t.name}: {t.description}")
+            logger.info(f"  - {t.name}")
 
     def list_models():
         import subprocess, json
@@ -483,6 +494,16 @@ async def cli_input_loop(agent, logger, tools, model_name):
 
                 if query == ":tools":
                     list_tools(tools)
+                    continue
+
+                if query.startswith(":tool "):
+                    parts = query.split(maxsplit=1)
+                    if len(parts) == 1:
+                        print("Usage: :tool <tool_name>")
+                        continue
+
+                    tool_name = parts[1]
+                    tool_description(tools, tool_name)
                     continue
 
                 if query == ":models":
