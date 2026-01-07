@@ -4,6 +4,7 @@ import logging
 import requests
 import operator
 import json
+import sys
 import websockets
 import platform
 import httpx
@@ -579,6 +580,11 @@ async def main():
     model_name = "llama3.1:8b"
     last = load_last_model()
     available = get_available_models()
+    available_count = len(available)
+
+    if available_count == 0:
+        print("❌ No models available. Download models using `ollama pull <model>`. Exiting.")
+        sys.exit(1)
 
     if last is not None and last != model_name and last in available:
         model_name = last
