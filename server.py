@@ -64,10 +64,8 @@ from tools.text_tools.concept_contextualizer import concept_contextualizer
 # ─────────────────────────────────────────────
 # RAG Tools
 # ─────────────────────────────────────────────
-from tools.rag.chunk_text import chunk_text
-from tools.rag.embed_text import embed_text
-from tools.rag.vector_search import vector_search
-from tools.rag.rag_ingest import ingest_text_document
+
+
 # ─────────────────────────────────────────────
 # Plex Tools
 # ─────────────────────────────────────────────
@@ -676,49 +674,7 @@ def concept_contextualizer_tool(concept: str) -> str:
 # ─────────────────────────────────────────────
 # RAG Tools
 # ─────────────────────────────────────────────
-@mcp.tool()
-def chunk_text_tool(text: str, max_chunk_size: int = 500):
-    logger.info(f"🛠 [server] chunk_text_tool called with text: {text}, max_chunk_size: {max_chunk_size}")
-    return chunk_text(text, max_chunk_size)
 
-@mcp.tool()
-def embed_text_tool(texts: list[str]):
-    logger.info(f"🛠 [server] embed_text_tool called with texts: {texts}")
-    return embed_text(texts)
-
-@mcp.tool()
-def vector_search_tool(query: str, top_k: int = 5):
-    logger.info(f"🛠 [server] vector_search_tool called with query: {query}, top_k: {top_k}")
-    return vector_search(query, top_k)
-
-@mcp.tool()
-def rag_ingest_text(doc_id: str, text: str) -> str:
-    """
-    Safely ingest a text document into the RAG memory.
-
-    This tool chunks, embeds, and stores the text in LanceDB.
-    It enforces strict size limits to prevent accidental ingestion
-    of extremely large content.
-
-    Use this tool when the user wants to add new knowledge to the RAG system.
-    """
-    logger.info(f"🛠 [server] rag_ingest_text called with doc_id: {doc_id}, text: {text}")
-    # Basic validation
-    if not isinstance(doc_id, str) or not doc_id.strip():
-        return json.dumps({
-            "error": "doc_id must be a non-empty string"
-        })
-
-    if not isinstance(text, str) or not text.strip():
-        return json.dumps({
-            "error": "text must be a non-empty string"
-        })
-
-    # Perform safe ingestion
-    result = ingest_text_document(doc_id=doc_id, text=text)
-
-    # Return JSON string (matching your delete_entry pattern)
-    return json.dumps(result)
 
 # ─────────────────────────────────────────────
 # Plex Tools
