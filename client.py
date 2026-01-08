@@ -384,8 +384,10 @@ def input_thread(input_queue, stop_event):
 
 async def run_agent(agent, conversation_state, user_message, logger):
     try:
+        # Increment loop counter
         conversation_state["loop_count"] += 1
 
+        # Loop guard
         if conversation_state["loop_count"] >= 5:
             logger.error("⚠️ Loop detected — stopping early after 5 iterations.")
 
@@ -398,36 +400,33 @@ async def run_agent(agent, conversation_state, user_message, logger):
             )
 
             conversation_state["messages"].append(error_msg)
-
-            # Reset loop counter for next user request
             conversation_state["loop_count"] = 0
-
             return {"messages": conversation_state["messages"]}
 
-        # 1. Ensure system prompt exists
+        # Ensure system prompt exists
         if not conversation_state["messages"]:
             conversation_state["messages"].append(
                 SystemMessage(content=SYSTEM_PROMPT)
             )
 
-        # 2. Add user message
+        # Add user message
         conversation_state["messages"].append(
             HumanMessage(content=user_message)
         )
 
-        # 3. Trim history but DO NOT remove tool messages
+        # Trim history (keep tool messages)
         conversation_state["messages"] = conversation_state["messages"][-MAX_MESSAGE_HISTORY:]
 
-        # 4. Ensure system prompt stays at index 0
+        # Ensure system prompt stays at index 0
         if not isinstance(conversation_state["messages"][0], SystemMessage):
             conversation_state["messages"].insert(0, SystemMessage(content=SYSTEM_PROMPT))
 
         logger.info(f"🧠 Calling LLM with {len(conversation_state['messages'])} messages")
 
-        # 5. Run the agent
+        # Run the agent
         result = await agent.ainvoke({"messages": conversation_state["messages"]})
 
-        # 6. Replace conversation state with the agent's returned messages
+        # Replace conversation state with returned messages
         conversation_state["messages"] = result["messages"]
         conversation_state["loop_count"] = 0
 
@@ -449,12 +448,17 @@ async def run_agent(agent, conversation_state, user_message, logger):
             conversation_state["messages"].append(error_msg)
             return {"messages": conversation_state["messages"]}
 
-        # Other errors
+        # Any other error — return the REAL exception message
         logger.exception("❌ Unexpected error in agent execution")
 
-        error_msg = AIMessage(content="An unexpected error occurred while running the agent.")
-        conversation_state["messages"].append(error_msg)
+        # Extract the meaningful part of the error
+        error_text = getattr(e, "args", [str(e)])[0]
 
+        error_msg = AIMessage(
+            content=f"An error occurred while running the agent:\n\n{error_text}"
+        )
+
+        conversation_state["messages"].append(error_msg)
         return {"messages": conversation_state["messages"]}
 
 async def cli_input_loop(agent, logger, tools, model_name):
