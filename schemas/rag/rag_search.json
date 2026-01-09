@@ -1,11 +1,30 @@
 {
-  "name": "rag_search",
-  "description": "Retrieve relevant knowledge base chunks.",
+  "name": "rag_search_tool",
+  "description": "Search the RAG database using semantic similarity with bge-large embeddings.",
   "input_schema": {
     "type": "object",
     "properties": {
-      "query": { "type": "string" }
+      "query": {
+        "type": "string",
+        "description": "The search query to find relevant text chunks"
+      },
+      "top_k": {
+        "type": "integer",
+        "description": "Maximum number of results to return (default: 5)",
+        "nullable": true,
+        "default": 5
+      },
+      "min_score": {
+        "type": "number",
+        "description": "Minimum similarity threshold 0-1 (default: 0.0)",
+        "nullable": true,
+        "default": 0.0
+      }
     },
     "required": ["query"]
+  },
+  "output_schema": {
+    "type": "string",
+    "description": "JSON string containing matching chunks with similarity scores and metadata"
   }
 }

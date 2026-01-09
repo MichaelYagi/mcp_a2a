@@ -13,6 +13,8 @@ The server is plug-and-play—add new capabilities by simply dropping modules in
 * **Schema-Driven Validation**: JSON schemas ensure correctly formatted inputs
 * **Versioned Storage**: File-backed persistence with automatic snapshotting
 * **Offline Semantic Search**: Pure-Python TF-IDF implementation
+* **RAG System**: Vector-based retrieval with OllamaEmbeddings (bge-large) for semantic search over ingested content
+* **Plex Media Integration**: Automated subtitle and metadata ingestion with batch processing
 * **Windows Optimized**: Handles encoding and stdio pipe challenges
 
 ---
@@ -57,6 +59,7 @@ mcp-server/
 
 * Python 3.10+
 * llama3.1:8b - Instructions below
+* bge-large - Instructions below
 
 ---
 
@@ -124,11 +127,12 @@ MAX_MESSAGE_HISTORY = 30
 
 ---
 
-**2. Run Ollama server and download model:**
+**2. Run Ollama server and download models:**
 
 ```
 ollama serve
 ollama pull llama3.1:8b
+ollama pull bge-large
 ```
 
 **3. Start the client:**

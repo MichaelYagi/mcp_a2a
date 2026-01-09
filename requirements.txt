@@ -7,6 +7,7 @@ typing-extensions
 python-dotenv
 requests
 ollama
+plexapi
 langchain-ollama
 websockets
 openai

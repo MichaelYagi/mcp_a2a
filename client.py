@@ -53,6 +53,7 @@ async def ensure_ollama_running(host: str = "http://127.0.0.1:11434"):
 class AgentState(TypedDict):
     """State that gets passed between nodes in the graph"""
     messages: Annotated[Sequence[BaseMessage], operator.add]
+    tools: dict  # Add this line
 
 # ============================================================================
 # Stop Condition Function - THIS PREVENTS INFINITE LOOPS
@@ -86,38 +87,102 @@ def should_continue(state: AgentState) -> str:
 
 # Decide when to use RAG
 def router(state):
-    last = state["messages"][-1].content.lower()
+    """Route based on what the agent decided to do"""
+    last_message = state["messages"][-1]
 
-    if state.get("tool_calls"):
-        return "tools"
+    logger = logging.getLogger("mcp_client")
+    logger.info(f"🎯 Router: Last message type = {type(last_message).__name__}")
 
-    if "ingest" in last or "update knowledge" in last:
-        return "ingest"
+    # If the AI made tool calls, go to tools node
+    if isinstance(last_message, AIMessage):
+        tool_calls = getattr(last_message, "tool_calls", [])
+        logger.info(f"🎯 Router: Found {len(tool_calls)} tool calls")
+        if tool_calls and len(tool_calls) > 0:
+            logger.info(f"🎯 Router: Routing to TOOLS")
+            return "tools"
 
-    if any(x in last for x in ["what is", "who is", "explain", "tell me about"]):
-        return "rag"
+    # If it's a user message, check for special routing
+    if isinstance(last_message, HumanMessage):
+        content = last_message.content.lower()
+        logger.info(f"🎯 Router: User message content: {content[:100]}")
 
+        # Check for ingestion
+        if "ingest" in content:
+            logger.info(f"🎯 Router: Routing to INGEST")
+            return "ingest"
+
+        # Check for RAG queries
+        if not any(keyword in content for keyword in ["movie", "plex", "search", "find", "show"]):
+            if any(keyword in content for keyword in ["what is", "who is", "explain", "tell me about"]):
+                logger.info(f"🎯 Router: Routing to RAG")
+                return "rag"
+
+    # Default: end conversation
+    logger.info(f"🎯 Router: Routing to END (agent)")
     return "agent"
 
 # Call rag_search tool and inject context
 async def rag_node(state):
+    """Search RAG and provide context to answer the question"""
     query = state["messages"][-1].content
 
-    # Call the RAG search tool
-    rag_result = await state["tools"]["rag_search_tool"].ainvoke({"query": query})
+    # Find the rag_search_tool
+    tools_dict = state.get("tools", {})
+    rag_search_tool = None
 
-    chunks = rag_result.get("chunks", [])
-    context = "\n\n".join(chunks)
+    for tool in tools_dict.values() if isinstance(tools_dict, dict) else tools_dict:
+        if hasattr(tool, 'name') and tool.name == "rag_search_tool":
+            rag_search_tool = tool
+            break
 
-    augmented = [
-        SystemMessage(content="Use the provided context to answer."),
-        HumanMessage(content=f"Context:\n{context}\n\nQuestion: {query}")
-    ]
+    if not rag_search_tool:
+        # No RAG tool available, just end
+        msg = AIMessage(content="RAG search is not available.")
+        return {"messages": state["messages"] + [msg]}
 
-    response = await state["llm"].ainvoke(augmented)
-    state["messages"].append(response)
+    try:
+        # Call RAG search
+        result = await rag_search_tool.ainvoke({"query": query})
 
-    return state
+        # Parse result if it's a string
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        # Extract chunks from results
+        chunks = []
+        if isinstance(result, dict):
+            results_list = result.get("results", [])
+            chunks = [item.get("text", "") for item in results_list if isinstance(item, dict)]
+
+        if not chunks:
+            msg = AIMessage(content="I couldn't find any relevant information in the knowledge base.")
+            return {"messages": state["messages"] + [msg]}
+
+        # Create context from chunks
+        context = "\n\n".join(chunks[:3])  # Use top 3 results
+
+        # Create augmented prompt with context
+        augmented_messages = state["messages"][:-1] + [
+            SystemMessage(content=f"Use this context to answer the question:\n\n{context}"),
+            state["messages"][-1]
+        ]
+
+        # Get LLM from state or create one
+        llm = state.get("llm")
+        if not llm:
+            from langchain_ollama import ChatOllama
+            llm = ChatOllama(model="llama3.1:8b", temperature=0)
+
+        # Generate response with context
+        response = await llm.ainvoke(augmented_messages)
+
+        return {"messages": state["messages"] + [response]}
+
+    except Exception as e:
+        logger = logging.getLogger("mcp_client")
+        logger.error(f"❌ Error in RAG node: {e}")
+        msg = AIMessage(content=f"Error searching knowledge base: {str(e)}")
+        return {"messages": state["messages"] + [msg]}
 
 # ============================================================================
 # Agent Graph Builder
@@ -156,20 +221,6 @@ def load_last_model():
 def save_last_model(model_name):
     with open(MODEL_STATE_FILE, "w") as f:
         f.write(model_name)
-
-async def ingest_node(state: AgentState):
-    ingest_tool = state["tools"]["plex_ingest_batch"]
-    result = await ingest_tool.ainvoke({"limit": 5})
-
-    msg = AIMessage(
-        content=f"Ingested: {result['ingested']}\nRemaining: {result['remaining']}"
-    )
-
-    return {
-        "messages": state["messages"] + [msg],
-        "tool_calls": [],
-        "tools": state["tools"],
-    }
 
 async def switch_model(model_name, tools, logger):
     global agent
@@ -220,34 +271,117 @@ def create_langgraph_agent(llm_with_tools, tools):
 
         response = await llm_with_tools.ainvoke(messages)
 
+        # Check for tool calls
+        tool_calls = getattr(response, "tool_calls", [])
+        logger.info(f"🔧 LLM returned {len(tool_calls)} tool calls")
+
+        # WORKAROUND: If no tool calls but response looks like a tool call, parse it
+        if len(tool_calls) == 0 and response.content:
+            import re
+            # Look for pattern like: semantic_media_search_text(query="...", limit=10)
+            match = re.search(r'(\w+)\((.*?)\)', response.content.replace('\n', ''))
+            if match:
+                tool_name = match.group(1)
+                args_str = match.group(2)
+
+                # Parse arguments
+                args = {}
+                for arg_match in re.finditer(r'(\w+)=(["\']?)([^,\)]+)\2', args_str):
+                    key = arg_match.group(1)
+                    value = arg_match.group(3)
+                    # Try to convert to int if it's a number
+                    try:
+                        value = int(value)
+                    except:
+                        pass
+                    args[key] = value
+
+                logger.info(f"🔧 Parsed tool call from text: {tool_name}({args})")
+
+                # Manually create tool call
+                response.tool_calls = [{
+                    "name": tool_name,
+                    "args": args,
+                    "id": "manual_call_1"
+                }]
+
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            for tc in response.tool_calls:
+                logger.info(f"🔧   Tool: {tc.get('name', 'unknown')}, Args: {tc.get('args', {})}")
+        else:
+            logger.info(f"🔧 LLM response (text): {response.content[:200]}")
+
         return {
             "messages": messages + [response],
-            "tool_calls": getattr(response, "tool_calls", []),
-            "tools": state.get("tools", tools),
+            "tools": state.get("tools", {}),
         }
 
     #
     # 2. Ingestion node
     #
     async def ingest_node(state: AgentState):
-        ingest_tool = state["tools"].get("plex_ingest_batch")
+        # Find the plex_ingest_batch tool
+        tools_dict = state.get("tools", {})
+        ingest_tool = None
+
+        for tool in tools_dict.values() if isinstance(tools_dict, dict) else tools_dict:
+            if hasattr(tool, 'name') and tool.name == "plex_ingest_batch":
+                ingest_tool = tool
+                break
+
         if not ingest_tool:
             msg = AIMessage(content="Ingestion tool not available.")
             return {
                 "messages": state["messages"] + [msg],
-                "tool_calls": [],
-                "tools": state["tools"],
+                "tools": state.get("tools", {}),
             }
 
-        result = await ingest_tool.ainvoke({"limit": 5})
-        msg = AIMessage(
-            content=f"Ingested: {result.get('ingested')}\nRemaining: {result.get('remaining')}"
-        )
+        try:
+            result = await ingest_tool.ainvoke({"limit": 5})
+
+            # Handle MCP TextContent wrapper
+            if isinstance(result, str) and result.startswith('[TextContent('):
+                import re
+                match = re.search(r"text='([^']*(?:\\'[^']*)*)'", result)
+                if match:
+                    result = match.group(1).replace("\\'", "'").replace("\\n", "\n")
+
+            # Parse JSON
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except json.JSONDecodeError:
+                    msg = AIMessage(content=f"Error: Could not parse ingestion result")
+                    return {
+                        "messages": state["messages"] + [msg],
+                        "tools": state.get("tools", {}),
+                    }
+
+            # Check for errors
+            if isinstance(result, dict) and "error" in result:
+                msg = AIMessage(content=f"Ingestion error: {result['error']}")
+            else:
+                ingested = result.get('ingested', []) if isinstance(result, dict) else []
+                remaining = result.get('remaining', 0) if isinstance(result, dict) else 0
+
+                if ingested:
+                    msg = AIMessage(
+                        content=f"✅ Ingested {len(ingested)} items:\n" +
+                                "\n".join(f"  • {item}" for item in ingested) +
+                                f"\n\n📊 Remaining: {remaining}"
+                    )
+                else:
+                    msg = AIMessage(content="✅ All items already ingested.")
+
+        except Exception as e:
+            logger.error(f"❌ Error in ingest_node: {e}")
+            import traceback
+            traceback.print_exc()
+            msg = AIMessage(content=f"Ingestion failed: {str(e)}")
 
         return {
             "messages": state["messages"] + [msg],
-            "tool_calls": [],
-            "tools": state["tools"],
+            "tools": state.get("tools", {}),
         }
 
     #
@@ -432,7 +566,7 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
 
                 # Run agent
                 agent = agent_ref[0]
-                result = await run_agent(agent, conversation_state, prompt, logger)
+                result = await run_agent(agent, conversation_state, prompt, logger, tools)
 
                 # Extract assistant message
                 final_message = result["messages"][-1]
@@ -474,7 +608,7 @@ def input_thread(input_queue, stop_event):
         except (EOFError, KeyboardInterrupt):
             break
 
-async def run_agent(agent, conversation_state, user_message, logger):
+async def run_agent(agent, conversation_state, user_message, logger, tools):  # Add tools parameter
     try:
         # Increment loop counter
         conversation_state["loop_count"] += 1
@@ -516,7 +650,17 @@ async def run_agent(agent, conversation_state, user_message, logger):
         logger.info(f"🧠 Calling LLM with {len(conversation_state['messages'])} messages")
 
         # Run the agent
+        # Around line 519, change from:
         result = await agent.ainvoke({"messages": conversation_state["messages"]})
+
+        # To:
+        # Build tool registry
+        tool_registry = {tool.name: tool for tool in tools}
+
+        result = await agent.ainvoke({
+            "messages": conversation_state["messages"],
+            "tools": tool_registry
+        })
 
         # Replace conversation state with returned messages
         conversation_state["messages"] = result["messages"]
@@ -697,7 +841,7 @@ async def cli_input_loop(agent, logger, tools, model_name):
                 await broadcast_message("cli_user_message", {"text": query})
 
                 # 3. Run unified agent pipeline (returns FULL LangGraph result)
-                result = await run_agent(agent, conversation_state, query, logger)
+                result = await run_agent(agent, conversation_state, query, logger, tools)
 
                 # 4. Extract assistant message
                 final_message = result["messages"][-1]
@@ -822,6 +966,27 @@ async def main():
 
     # 6️⃣ Bind tools to LLM
     llm_with_tools = llm.bind_tools(tools)
+
+    # ADD THIS TEST HERE:
+    logger.info("=" * 60)
+    logger.info("🧪 TESTING TOOL BINDING")
+    test_messages = [
+        SystemMessage(content="You have access to tools. Call the semantic_media_search_text tool to find movies."),
+        HumanMessage(content="find action movies")
+    ]
+    test_response = await llm_with_tools.ainvoke(test_messages)
+    logger.info(f"Test response type: {type(test_response)}")
+    logger.info(f"Has tool_calls attr: {hasattr(test_response, 'tool_calls')}")
+    if hasattr(test_response, 'tool_calls'):
+        tool_calls = test_response.tool_calls
+        logger.info(f"Number of tool calls: {len(tool_calls)}")
+        if tool_calls:
+            for tc in tool_calls:
+                logger.info(f"  Tool call: {tc}")
+    else:
+        logger.info("No tool_calls attribute found!")
+    logger.info(f"Response content: {test_response.content[:300]}")
+    logger.info("=" * 60)
 
     # 7️⃣ Create LangGraph agent with stop conditions
     agent = create_langgraph_agent(llm_with_tools, tools)

@@ -64,7 +64,6 @@ from tools.text_tools.concept_contextualizer import concept_contextualizer
 # ─────────────────────────────────────────────
 # RAG Tools
 # ─────────────────────────────────────────────
-from tools.plex.ingest import ingest_next_batch
 from tools.rag.rag_add import rag_add
 from tools.rag.rag_search import rag_search
 # ─────────────────────────────────────────────
@@ -72,6 +71,7 @@ from tools.rag.rag_search import rag_search
 # ─────────────────────────────────────────────
 from tools.plex.semantic_media_search import semantic_media_search
 from tools.plex.scene_locator import scene_locator
+from tools.plex.ingest import ingest_next_batch
 
 mcp = FastMCP("MCP server")
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -675,21 +675,70 @@ def concept_contextualizer_tool(concept: str) -> str:
 # ─────────────────────────────────────────────
 # RAG Tools
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# RAG Tools
+# ─────────────────────────────────────────────
 @mcp.tool()
-def rag_add_tool(text: str):
-    return rag_add(text)
+def rag_add_tool(text: str, source: str | None = None, chunk_size: int = 500) -> str:
+    """
+    Add text to the RAG (Retrieval-Augmented Generation) system.
+
+    • Automatically chunks text into manageable pieces
+    • Generates embeddings using bge-large model
+    • Stores in vector database for semantic search
+
+    Args:
+        text: The text content to add to RAG
+        source: Optional identifier for the source (e.g., "movie:12345", "book:chapter1")
+        chunk_size: Words per chunk (default: 500)
+
+    Use this tool when:
+    • Ingesting movie/TV subtitles
+    • Adding knowledge base articles
+    • Storing any text for later semantic retrieval
+    """
+    logger.info(f"🛠 [server] rag_add_tool called with text length: {len(text)}, source: {source}")
+    result = rag_add(text, source, chunk_size)
+    return json.dumps(result, indent=2)
+
 
 @mcp.tool()
-def rag_search_tool(query: str):
-    return rag_search(query)
+def rag_search_tool(query: str, top_k: int = 5, min_score: float = 0.0) -> str:
+    """
+    Search the RAG database using semantic similarity.
+
+    • Returns most relevant text chunks
+    • Uses bge-large embeddings for semantic matching
+    • Includes similarity scores and metadata
+
+    Args:
+        query: What to search for (e.g., "scenes about betrayal")
+        top_k: Maximum number of results (default: 5)
+        min_score: Minimum similarity threshold 0-1 (default: 0.0)
+
+    Use this tool when:
+    • Looking for specific scenes or dialogue
+    • Finding relevant context from ingested content
+    • Answering questions about stored knowledge
+
+    Returns:
+        JSON with matching chunks, scores, and metadata
+    """
+    logger.info(f"🛠 [server] rag_search_tool called with query: {query}, top_k: {top_k}")
+    result = rag_search(query, top_k, min_score)
+    return json.dumps(result, indent=2)
+
 
 @mcp.tool()
-def plex_ingest_batch(limit: int = 5):
+def plex_ingest_batch(limit: int = 5) -> str:
     """
     Ingests up to `limit` unprocessed Plex items into RAG.
     Returns a summary of what was ingested.
     """
-    return ingest_next_batch(limit)
+    logger.info(f"🛠 [server] plex_ingest_batch called with limit: {limit}")
+    result = ingest_next_batch(limit)
+    logger.info(f"🛠 [server] plex_ingest_batch returning: {result}")
+    return json.dumps(result, indent=2)  # Make sure this line is here
 
 # ─────────────────────────────────────────────
 # Plex Tools

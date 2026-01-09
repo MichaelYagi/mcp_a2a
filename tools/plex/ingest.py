@@ -1,120 +1,118 @@
-import os
 import json
+import logging
 from pathlib import Path
+from typing import Dict, Any
 
+logger = logging.getLogger("mcp_server")
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROGRESS_FILE = PROJECT_ROOT / "data" / "plex_ingest_progress.json"
+PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+# Import Plex utilities
+from .plex_utils import stream_all_media, extract_metadata, stream_subtitles, chunk_stream
+
+# Import RAG add function
 from tools.rag.rag_add import rag_add
-from tools.plex.scene_locator import _plex_get, _plex_download, _parse_srt
-from tools.plex.semantic_media_search import _tokenize  # reuse tokenizer
-
-PROGRESS_FILE = Path("plex_ingest_progress.json")
 
 
-# ------------------------------------------------------------
-# Progress tracking
-# ------------------------------------------------------------
-def load_progress():
-    if PROGRESS_FILE.exists():
-        try:
-            return json.loads(PROGRESS_FILE.read_text())
-        except:
-            return {}
-    return {}
+def load_progress() -> Dict[str, bool]:
+    """Load ingestion progress from disk"""
+    if not PROGRESS_FILE.exists():
+        return {}
+
+    try:
+        with open(PROGRESS_FILE, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return {}
 
 
-def save_progress(progress):
-    PROGRESS_FILE.write_text(json.dumps(progress, indent=2))
+def save_progress(progress: Dict[str, bool]) -> None:
+    """Save ingestion progress to disk"""
+    with open(PROGRESS_FILE, 'w') as f:
+        json.dump(progress, f, indent=2)
 
 
-# ------------------------------------------------------------
-# Chunking (reusing your tokenizer)
-# ------------------------------------------------------------
-def chunk_text(text, size=800, overlap=100):
-    text = text.strip()
-    if not text:
-        return []
+def ingest_next_batch(limit: int = 5) -> Dict[str, Any]:
+    """
+    Ingest the next batch of Plex items into RAG.
 
-    chunks = []
-    start = 0
-    length = len(text)
+    Args:
+        limit: Maximum number of items to ingest
 
-    while start < length:
-        end = min(start + size, length)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        start = end - overlap
-        if start < 0:
-            start = 0
+    Returns:
+        Dictionary with ingested items and remaining count
+    """
+    try:
+        progress = load_progress()
+        ingested = []
+        remaining = 0
+        count = 0
 
-    return chunks
+        media_stream = stream_all_media()
 
+        for item in media_stream:
+            rating_key = str(item["id"])
 
-# ------------------------------------------------------------
-# Metadata extraction (aligned with your semantic index)
-# ------------------------------------------------------------
-def extract_metadata(item):
-    title = item.get("title", "")
-    summary = item.get("summary", "")
-    year = item.get("year", "")
-    genres = [g["tag"] for g in item.get("Genre", [])]
-    cast = [r["tag"] for r in item.get("Role", [])]
+            # Skip already ingested items
+            if rating_key in progress:
+                continue
 
-    parts = [
-        f"Title: {title} ({year})",
-        f"Summary: {summary}",
-        f"Genres: {', '.join(genres)}",
-        f"Cast: {', '.join(cast)}"
-    ]
+            # Count remaining items after limit
+            if count >= limit:
+                remaining += 1
+                continue
 
-    return "\n".join([p for p in parts if p.strip()])
+            logger.info(f"📀 Ingesting: {item['title']}")
 
+            # 1. Add metadata to RAG
+            meta_text = extract_metadata(item)
+            rag_add(
+                text=meta_text,
+                source=f"plex:metadata:{rating_key}",
+                chunk_size=200
+            )
 
-# ------------------------------------------------------------
-# Subtitle extraction (using your existing subtitle logic)
-# ------------------------------------------------------------
-def extract_subtitles(rating_key):
-    meta = _plex_get(f"/library/metadata/{rating_key}")
-    media = meta["MediaContainer"]["Metadata"][0]
+            # 2. Add subtitles to RAG (if available)
+            try:
+                subtitle_chunks = list(chunk_stream(stream_subtitles(rating_key)))
 
-    subtitle_url = None
+                if subtitle_chunks:
+                    for chunk in subtitle_chunks:
+                        rag_add(
+                            text=chunk,
+                            source=f"plex:subtitles:{rating_key}",
+                            chunk_size=500
+                        )
+                    logger.info(f"  ✓ Added {len(subtitle_chunks)} subtitle chunks")
+                else:
+                    logger.info(f"  ⚠ No subtitles found")
 
-    for media_part in media.get("Media", []):
-        for part in media_part.get("Part", []):
-            for stream in part.get("Stream", []):
-                if stream.get("streamType") == 3:
-                    subtitle_url = stream.get("key")
-                    break
+            except Exception as e:
+                logger.warning(f"  ⚠ Could not process subtitles: {e}")
 
-    if not subtitle_url:
-        return ""
+            # Mark as ingested
+            progress[rating_key] = True
+            ingested.append(item["title"])
+            count += 1
 
-    raw = _plex_download(subtitle_url)
-    entries = _parse_srt(raw)
+        # Save progress
+        save_progress(progress)
 
-    if not entries:
-        return ""
+        logger.info(f"✅ Ingested {len(ingested)} items, {remaining} remaining")
 
-    # Combine all subtitle text into one block
-    return " ".join([e["text"] for e in entries])
+        return {
+            "ingested": ingested,
+            "remaining": remaining
+        }
 
-
-# ------------------------------------------------------------
-# Main ingestion batch
-# ------------------------------------------------------------
-def ingest_next_batch(limit=5):
-    progress = load_progress()
-
-    # Fetch all Plex media using your semantic index fetcher
-    from tools.plex.semantic_media_search import _fetch_all_media
-    items = _fetch_all_media()
-
-    unprocessed = [i for i in items if str(i["id"]) not in progress]
-    batch = unprocessed[:limit]
-
-    ingested_titles = []
-
-    for item in batch:
-        rating_key = str(item["id"])
-
-        # Extract metadata
-        meta_text = extract_metadata
+    except Exception as e:
+        logger.error(f"❌ Error in ingest_next_batch: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "error": str(e),
+            "ingested": [],
+            "remaining": 0
+        }
