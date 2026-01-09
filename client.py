@@ -9,8 +9,11 @@ import websockets
 import platform
 import httpx
 import threading
-from queue import Queue
+import socket
 
+from http.server import SimpleHTTPRequestHandler
+from socketserver import TCPServer
+from queue import Queue
 from typing import TypedDict, Annotated, Sequence
 from mcp_use.client.client import MCPClient
 from mcp_use.agents.mcpagent import MCPAgent
@@ -614,8 +617,7 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
         # Remove this client when they disconnect
         CONNECTED_WEBSOCKETS.discard(websocket)
 
-
-async def start_websocket_server(agent, tools, logger):
+async def start_websocket_server(agent, tools, logger, host="0.0.0.0", port=8765):
     """Start the WebSocket server without blocking"""
 
     async def handler(websocket):
@@ -624,10 +626,37 @@ async def start_websocket_server(agent, tools, logger):
         except websockets.exceptions.ConnectionClosed:
             pass
 
-    server = await websockets.serve(handler, "127.0.0.1", 8765)
-    logger.info("🌐 Browser UI available at ws://127.0.0.1:8765")
+    server = await websockets.serve(handler, host, port)
+
+    # Show connection info
+    import socket
+    try:
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        logger.info(f"🌐 WebSocket listening on {host}:{port}")
+        logger.info(f"   Local: ws://localhost:{port}")
+        logger.info(f"   Network: ws://{local_ip}:{port}")
+    except:
+        logger.info(f"🌐 WebSocket server at ws://{host}:{port}")
+
     return server
 
+def start_http_server(port=9000):
+    """Serve index.html over HTTP on the network"""
+    Handler = SimpleHTTPRequestHandler
+
+    def serve():
+        with TCPServer(("0.0.0.0", port), Handler) as httpd:
+            try:
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                print(f"📄 HTTP server: http://{local_ip}:{port}/index.html")
+            except:
+                print(f"📄 HTTP server running on port {port}")
+            httpd.serve_forever()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
 
 def input_thread(input_queue, stop_event):
     """Thread to handle blocking input() calls"""
@@ -1029,8 +1058,10 @@ async def main():
     index_path = PROJECT_ROOT / "index.html"
     open_browser_file(index_path)
 
+    start_http_server(port=9000)
+
     # Start WebSocket server (non-blocking)
-    websocket_server = await start_websocket_server(agent, tools, logger)
+    websocket_server = await start_websocket_server(agent, tools, logger, host="0.0.0.0", port=8765)
 
     print("🖥️  CLI interface ready")
     print("🌐 Browser interface ready at http://localhost:8765")
