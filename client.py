@@ -795,11 +795,17 @@ def start_http_server(port=9000):
     def serve():
         with TCPServer(("0.0.0.0", port), Handler) as httpd:
             try:
-                hostname = socket.gethostname()
-                local_ip = socket.gethostbyname(hostname)
-                print(f"📄 HTTP server: http://{local_ip}:{port}/index.html")
+                # Get actual network IP (not 127.0.1.1)
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+
+                print(f"📄 HTTP server listening on 0.0.0.0:{port}")
+                print(f"   Local: http://localhost:{port}/index.html")
+                print(f"   Network: http://{local_ip}:{port}/index.html")
             except:
-                print(f"📄 HTTP server running on port {port}")
+                print(f"📄 HTTP server running on 0.0.0.0:{port}")
             httpd.serve_forever()
 
     thread = threading.Thread(target=serve, daemon=True)
