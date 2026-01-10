@@ -38,6 +38,44 @@ SYSTEM_PROMPT = """You are a helpful assistant with access to tools.
 
 agent = None
 
+# ============================================================================
+# WebSocket Log Handler
+# ============================================================================
+
+LOG_WEBSOCKET_CLIENTS = set()
+
+
+class WebSocketLogHandler(logging.Handler):
+    """Custom log handler that broadcasts logs to WebSocket clients"""
+
+    def emit(self, record):
+        try:
+            log_entry = {
+                "timestamp": self.format_time(record),
+                "level": record.levelname,
+                "name": record.name,
+                "message": record.getMessage()
+            }
+
+            # Broadcast to all connected log clients
+            asyncio.create_task(self.broadcast_log(log_entry))
+        except Exception:
+            self.handleError(record)
+
+    def format_time(self, record):
+        from datetime import datetime
+        return datetime.fromtimestamp(record.created).isoformat()
+
+    async def broadcast_log(self, log_entry):
+        """Send log entry to all connected WebSocket clients"""
+        if LOG_WEBSOCKET_CLIENTS:
+            message = json.dumps({"type": "log", **log_entry})
+            await asyncio.gather(
+                *[ws.send(message) for ws in LOG_WEBSOCKET_CLIENTS],
+                return_exceptions=True
+            )
+
+
 async def ensure_ollama_running(host: str = "http://127.0.0.1:11434"):
     try:
         async with httpx.AsyncClient(timeout=1.0) as client:
@@ -49,6 +87,7 @@ async def ensure_ollama_running(host: str = "http://127.0.0.1:11434"):
             f"Start it with 'ollama serve'. Original error: {e}"
         )
 
+
 # ============================================================================
 # LangGraph State Definition
 # ============================================================================
@@ -56,7 +95,8 @@ async def ensure_ollama_running(host: str = "http://127.0.0.1:11434"):
 class AgentState(TypedDict):
     """State that gets passed between nodes in the graph"""
     messages: Annotated[Sequence[BaseMessage], operator.add]
-    tools: dict  # Add this line
+    tools: dict
+
 
 # ============================================================================
 # Stop Condition Function - THIS PREVENTS INFINITE LOOPS
@@ -74,8 +114,8 @@ def should_continue(state: AgentState) -> str:
             valid_calls = [
                 call for call in tool_calls
                 if isinstance(call, dict)
-                and "name" in call
-                and call.get("args") is not None
+                   and "name" in call
+                   and call.get("args") is not None
             ]
 
             if valid_calls:
@@ -84,11 +124,11 @@ def should_continue(state: AgentState) -> str:
     # Otherwise, stop
     return "end"
 
+
 # ============================================================================
 # RAG router
 # ============================================================================
 
-# Decide when to use RAG
 def router(state):
     """Route based on what the agent decided to do"""
     last_message = state["messages"][-1]
@@ -124,7 +164,7 @@ def router(state):
     logger.info(f"🎯 Router: Routing to END (agent)")
     return "agent"
 
-# Call rag_search tool and inject context
+
 async def rag_node(state):
     """Search RAG and provide context to answer the question"""
     query = state["messages"][-1].content
@@ -139,19 +179,15 @@ async def rag_node(state):
             break
 
     if not rag_search_tool:
-        # No RAG tool available, just end
         msg = AIMessage(content="RAG search is not available.")
         return {"messages": state["messages"] + [msg]}
 
     try:
-        # Call RAG search
         result = await rag_search_tool.ainvoke({"query": query})
 
-        # Parse result if it's a string
         if isinstance(result, str):
             result = json.loads(result)
 
-        # Extract chunks from results
         chunks = []
         if isinstance(result, dict):
             results_list = result.get("results", [])
@@ -161,22 +197,18 @@ async def rag_node(state):
             msg = AIMessage(content="I couldn't find any relevant information in the knowledge base.")
             return {"messages": state["messages"] + [msg]}
 
-        # Create context from chunks
-        context = "\n\n".join(chunks[:3])  # Use top 3 results
+        context = "\n\n".join(chunks[:3])
 
-        # Create augmented prompt with context
         augmented_messages = state["messages"][:-1] + [
             SystemMessage(content=f"Use this context to answer the question:\n\n{context}"),
             state["messages"][-1]
         ]
 
-        # Get LLM from state or create one
         llm = state.get("llm")
         if not llm:
             from langchain_ollama import ChatOllama
             llm = ChatOllama(model="llama3.1:8b", temperature=0)
 
-        # Generate response with context
         response = await llm.ainvoke(augmented_messages)
 
         return {"messages": state["messages"] + [response]}
@@ -186,6 +218,7 @@ async def rag_node(state):
         logger.error(f"❌ Error in RAG node: {e}")
         msg = AIMessage(content=f"Error searching knowledge base: {str(e)}")
         return {"messages": state["messages"] + [msg]}
+
 
 # ============================================================================
 # Agent Graph Builder
@@ -201,12 +234,11 @@ def get_available_models():
         out = subprocess.check_output(["ollama", "list"], text=True)
         lines = out.strip().split("\n")
 
-        # Skip header line
         models = []
         for line in lines[1:]:
             parts = line.split()
             if parts:
-                models.append(parts[0])  # first column = model name
+                models.append(parts[0])
 
         return models
 
@@ -225,6 +257,7 @@ def save_last_model(model_name):
     with open(MODEL_STATE_FILE, "w") as f:
         f.write(model_name)
 
+
 async def switch_model(model_name, tools, logger):
     global agent
 
@@ -240,11 +273,9 @@ async def switch_model(model_name, tools, logger):
 
     logger.info(f"🔄 Switching model to: {model_name}")
 
-    # Build new LLM
     new_llm = ChatOllama(model=model_name, temperature=0)
     llm_with_tools = new_llm.bind_tools(tools)
 
-    # Rebuild LangGraph agent
     agent = create_langgraph_agent(llm_with_tools, tools)
 
     save_last_model(model_name)
@@ -262,30 +293,25 @@ def list_commands():
     print(":models - List available models")
     print(":clear history - Clear the chat history")
 
+
 def create_langgraph_agent(llm_with_tools, tools):
     logger = logging.getLogger("mcp_client")
 
-    #
-    # 1. Agent (LLM) node
-    #
     async def call_model(state: AgentState):
         messages = state["messages"]
         logger.info(f"🧠 Calling LLM with {len(messages)} messages")
 
         response = await llm_with_tools.ainvoke(messages)
 
-        # Check for tool calls
         tool_calls = getattr(response, "tool_calls", [])
         logger.info(f"🔧 LLM returned {len(tool_calls)} tool calls")
 
-        # WORKAROUND: Parse text output and convert to tool calls
         if len(tool_calls) == 0 and response.content:
             import re
             import json as json_module
 
             content = response.content.strip()
 
-            # Try JSON format: {"type": "function", "name": "tool_name", "arguments": {...}}
             try:
                 parsed = json_module.loads(content)
                 if isinstance(parsed, dict) and parsed.get("name"):
@@ -305,7 +331,6 @@ def create_langgraph_agent(llm_with_tools, tools):
                         "type": "tool_call"
                     }]
             except (json_module.JSONDecodeError, ValueError):
-                # Try function format: tool_name(arg="value", arg2=123)
                 match = re.search(r'(\w+)\((.*?)\)', content.replace('\n', '').replace('`', ''))
                 if match:
                     tool_name = match.group(1)
@@ -313,11 +338,9 @@ def create_langgraph_agent(llm_with_tools, tools):
 
                     args = {}
                     if args_str:
-                        # Parse key=value pairs
                         for arg_match in re.finditer(r'(\w+)\s*=\s*(["\']?)([^,\)]+)\2', args_str):
                             key = arg_match.group(1)
                             value = arg_match.group(3).strip().strip('"\'')
-                            # Try converting to int
                             try:
                                 value = int(value)
                             except:
@@ -343,11 +366,7 @@ def create_langgraph_agent(llm_with_tools, tools):
             "tools": state.get("tools", {}),
         }
 
-    #
-    # 2. Ingestion node
-    #
     async def ingest_node(state: AgentState):
-        # Find the plex_ingest_batch tool
         tools_dict = state.get("tools", {})
         ingest_tool = None
 
@@ -366,14 +385,12 @@ def create_langgraph_agent(llm_with_tools, tools):
         try:
             result = await ingest_tool.ainvoke({"limit": 5})
 
-            # Handle MCP TextContent wrapper
             if isinstance(result, str) and result.startswith('[TextContent('):
                 import re
                 match = re.search(r"text='([^']*(?:\\'[^']*)*)'", result)
                 if match:
                     result = match.group(1).replace("\\'", "'").replace("\\n", "\n")
 
-            # Parse JSON
             if isinstance(result, str):
                 try:
                     result = json.loads(result)
@@ -384,7 +401,6 @@ def create_langgraph_agent(llm_with_tools, tools):
                         "tools": state.get("tools", {}),
                     }
 
-            # Check for errors
             if isinstance(result, dict) and "error" in result:
                 msg = AIMessage(content=f"Ingestion error: {result['error']}")
             else:
@@ -393,7 +409,6 @@ def create_langgraph_agent(llm_with_tools, tools):
                 total_ingested = result.get('total_ingested', 0) if isinstance(result, dict) else 0
 
                 if ingested:
-                    # Create numbered list
                     items_list = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(ingested))
 
                     msg = AIMessage(
@@ -417,48 +432,35 @@ def create_langgraph_agent(llm_with_tools, tools):
             "tools": state.get("tools", {}),
         }
 
-    #
-    # 3. Build graph
-    #
     workflow = StateGraph(AgentState)
 
-    # Nodes
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", ToolNode(tools))
     workflow.add_node("rag", rag_node)
-    workflow.add_node("ingest", ingest_node)   # ← REQUIRED
+    workflow.add_node("ingest", ingest_node)
 
-    # Entry point
     workflow.set_entry_point("agent")
 
-    #
-    # 4. Router transitions
-    #
     workflow.add_conditional_edges(
         "agent",
         router,
         {
             "tools": "tools",
             "rag": "rag",
-            "ingest": "ingest",   # ← REQUIRED
+            "ingest": "ingest",
             "agent": END
         }
     )
 
-    #
-    # 5. Node-to-node edges
-    #
-    workflow.add_edge("tools", "agent")     # tools → agent
-    workflow.add_edge("ingest", "agent")    # ingest → agent
-    workflow.add_edge("rag", END)           # rag → end
+    workflow.add_edge("tools", "agent")
+    workflow.add_edge("ingest", "agent")
+    workflow.add_edge("rag", END)
 
-    #
-    # 6. Compile
-    #
     app = workflow.compile()
     logger.info("✅ LangGraph agent compiled successfully")
 
     return app
+
 
 # ============================================================================
 # Helper Functions
@@ -470,12 +472,12 @@ def get_public_ip():
     except:
         return None
 
+
 def get_venv_python(project_root: Path) -> str:
     """Return the correct Python executable path for the project's virtual environment."""
 
     venv = project_root / ".venv"
 
-    # Windows first — avoids WinError 1920 on nonexistent .venv/bin
     if platform.system() == "Windows":
         candidates = [
             venv / "Scripts" / "python.exe",
@@ -504,7 +506,7 @@ GLOBAL_CONVERSATION_STATE = {
     "messages": [],
     "loop_count": 0
 }
-CONNECTED_WEBSOCKETS = set()  # Track all connected clients
+CONNECTED_WEBSOCKETS = set()
 
 
 async def broadcast_message(message_type, data):
@@ -518,7 +520,6 @@ async def broadcast_message(message_type, data):
 
 
 async def websocket_handler(websocket, agent_ref, tools, logger):
-    # Add this client to the set of connected clients
     CONNECTED_WEBSOCKETS.add(websocket)
 
     try:
@@ -526,11 +527,9 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
 
         async for raw in websocket:
 
-            # 1. Ignore empty or whitespace-only messages
             if not raw or not raw.strip():
                 continue
 
-            # 2. Try to parse JSON; if not JSON, treat as plain user text
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
@@ -546,7 +545,6 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
                 }))
                 continue
 
-            # 3. Browser requests history sync
             if data.get("type") == "history_request":
                 history_payload = [
                     {"role": "user", "text": m.content} if isinstance(m, HumanMessage)
@@ -560,14 +558,11 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
                 }))
                 continue
 
-            # 4. Browser requests model switch
             if data.get("type") == "switch_model":
                 model_name = data.get("model")
 
-                # Attempt to switch
                 new_agent = await switch_model(model_name, tools, logger)
 
-                # If switching failed (model not installed)
                 if new_agent is None:
                     await websocket.send(json.dumps({
                         "type": "model_error",
@@ -575,7 +570,6 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
                     }))
                     continue
 
-                # Success — update the agent
                 agent_ref[0] = new_agent
 
                 await websocket.send(json.dumps({
@@ -584,32 +578,38 @@ async def websocket_handler(websocket, agent_ref, tools, logger):
                 }))
                 continue
 
-            # 5. Normal user message
             if data.get("type") == "user" or "text" in data:
                 prompt = data.get("text")
 
-                # Show user prompt in CLI
                 print(f"\n> {prompt}")
 
-                # BROADCAST user message to ALL web clients (so all see the question)
                 await broadcast_message("user_message", {"text": prompt})
 
-                # Run agent
                 agent = agent_ref[0]
                 result = await run_agent(agent, conversation_state, prompt, logger, tools)
 
-                # Extract assistant message
                 final_message = result["messages"][-1]
                 assistant_text = final_message.content
 
-                # Print assistant response to CLI
                 print("\n" + assistant_text + "\n")
 
-                # BROADCAST assistant response to ALL web clients
                 await broadcast_message("assistant_message", {"text": assistant_text})
     finally:
-        # Remove this client when they disconnect
         CONNECTED_WEBSOCKETS.discard(websocket)
+
+
+async def log_websocket_handler(websocket):
+    """Handle WebSocket connections for log streaming"""
+    LOG_WEBSOCKET_CLIENTS.add(websocket)
+
+    try:
+        async for message in websocket:
+            pass
+    except websockets.exceptions.ConnectionClosed:
+        pass
+    finally:
+        LOG_WEBSOCKET_CLIENTS.discard(websocket)
+
 
 async def start_websocket_server(agent, tools, logger, host="0.0.0.0", port=8765):
     """Start the WebSocket server without blocking"""
@@ -622,7 +622,6 @@ async def start_websocket_server(agent, tools, logger, host="0.0.0.0", port=8765
 
     server = await websockets.serve(handler, host, port)
 
-    # Show connection info
     import socket
     try:
         hostname = socket.gethostname()
@@ -634,6 +633,25 @@ async def start_websocket_server(agent, tools, logger, host="0.0.0.0", port=8765
         logger.info(f"🌐 WebSocket server at ws://{host}:{port}")
 
     return server
+
+
+async def start_log_websocket_server(host="0.0.0.0", port=8766):
+    """Start a separate WebSocket server for log streaming"""
+
+    server = await websockets.serve(log_websocket_handler, host, port)
+
+    logger = logging.getLogger("mcp_client")
+    try:
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        logger.info(f"📊 Log WebSocket listening on {host}:{port}")
+        logger.info(f"   Local: ws://localhost:{port}")
+        logger.info(f"   Network: ws://{local_ip}:{port}")
+    except:
+        logger.info(f"📊 Log WebSocket server at ws://{host}:{port}")
+
+    return server
+
 
 def start_http_server(port=9000):
     """Serve index.html over HTTP on the network"""
@@ -652,6 +670,7 @@ def start_http_server(port=9000):
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
 
+
 def input_thread(input_queue, stop_event):
     """Thread to handle blocking input() calls"""
     while not stop_event.is_set():
@@ -661,12 +680,11 @@ def input_thread(input_queue, stop_event):
         except (EOFError, KeyboardInterrupt):
             break
 
-async def run_agent(agent, conversation_state, user_message, logger, tools):  # Add tools parameter
+
+async def run_agent(agent, conversation_state, user_message, logger, tools):
     try:
-        # Increment loop counter
         conversation_state["loop_count"] += 1
 
-        # Loop guard
         if conversation_state["loop_count"] >= 5:
             logger.error("⚠️ Loop detected — stopping early after 5 iterations.")
 
@@ -682,32 +700,22 @@ async def run_agent(agent, conversation_state, user_message, logger, tools):  # 
             conversation_state["loop_count"] = 0
             return {"messages": conversation_state["messages"]}
 
-        # Ensure system prompt exists
         if not conversation_state["messages"]:
             conversation_state["messages"].append(
                 SystemMessage(content=SYSTEM_PROMPT)
             )
 
-        # Add user message
         conversation_state["messages"].append(
             HumanMessage(content=user_message)
         )
 
-        # Trim history (keep tool messages)
         conversation_state["messages"] = conversation_state["messages"][-MAX_MESSAGE_HISTORY:]
 
-        # Ensure system prompt stays at index 0
         if not isinstance(conversation_state["messages"][0], SystemMessage):
             conversation_state["messages"].insert(0, SystemMessage(content=SYSTEM_PROMPT))
 
         logger.info(f"🧠 Calling LLM with {len(conversation_state['messages'])} messages")
 
-        # Run the agent
-        # Around line 519, change from:
-        result = await agent.ainvoke({"messages": conversation_state["messages"]})
-
-        # To:
-        # Build tool registry
         tool_registry = {tool.name: tool for tool in tools}
 
         result = await agent.ainvoke({
@@ -715,14 +723,12 @@ async def run_agent(agent, conversation_state, user_message, logger, tools):  # 
             "tools": tool_registry
         })
 
-        # Replace conversation state with returned messages
         conversation_state["messages"] = result["messages"]
         conversation_state["loop_count"] = 0
 
         return {"messages": conversation_state["messages"]}
 
     except Exception as e:
-        # Recursion limit handling
         if "GraphRecursionError" in str(e):
             logger.error("❌ Recursion limit reached — stopping agent loop safely.")
 
@@ -737,10 +743,8 @@ async def run_agent(agent, conversation_state, user_message, logger, tools):  # 
             conversation_state["messages"].append(error_msg)
             return {"messages": conversation_state["messages"]}
 
-        # Any other error — return the REAL exception message
         logger.exception("❌ Unexpected error in agent execution")
 
-        # Extract the meaningful part of the error
         error_text = getattr(e, "args", [str(e)])[0]
 
         error_msg = AIMessage(
@@ -750,24 +754,23 @@ async def run_agent(agent, conversation_state, user_message, logger, tools):  # 
         conversation_state["messages"].append(error_msg)
         return {"messages": conversation_state["messages"]}
 
+
 async def cli_input_loop(agent, logger, tools, model_name):
     """Handle CLI input using a separate thread"""
     conversation_state = GLOBAL_CONVERSATION_STATE
 
-    # Create queue and event for thread communication
     input_queue = Queue()
     stop_event = threading.Event()
 
-    # Start input thread
     thread = threading.Thread(target=input_thread, args=(input_queue, stop_event), daemon=True)
     thread.start()
 
     def tool_description(tools_obj, tool_name):
-        found=False
+        found = False
         for t in tools_obj:
             if t.name == tool_name:
                 logger.info(f"  - {t.description}")
-                found=True
+                found = True
                 break
         if not found:
             logger.info(f"❌ MCP tool {tool_name} not found")
@@ -816,8 +819,7 @@ async def cli_input_loop(agent, logger, tools, model_name):
 
     try:
         while True:
-            # Check for input from the queue
-            await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
+            await asyncio.sleep(0.1)
 
             if not input_queue.empty():
                 query = input_queue.get().strip()
@@ -884,27 +886,20 @@ async def cli_input_loop(agent, logger, tools, model_name):
                         print(f"Unknown clear target: {target}")
                         continue
 
-                # Normal chat
                 logger.info(f"💬 Received query: '{query}'")
 
-                # 1. Print user prompt to CLI
                 print(f"\n> {query}")
 
-                # 2. Broadcast user prompt to Web UI
                 await broadcast_message("cli_user_message", {"text": query})
 
-                # 3. Run unified agent pipeline (returns FULL LangGraph result)
                 result = await run_agent(agent, conversation_state, query, logger, tools)
 
-                # 4. Extract assistant message
                 final_message = result["messages"][-1]
                 assistant_text = final_message.content
 
-                # 5. Print assistant response to CLI
                 print("\n" + assistant_text + "\n")
                 logger.info("✅ Query completed successfully")
 
-                # 6. Broadcast assistant response to Web UI
                 await broadcast_message("cli_assistant_message", {"text": assistant_text})
 
     except KeyboardInterrupt:
@@ -918,13 +913,10 @@ def open_browser_file(path: Path):
     import subprocess
     import webbrowser
 
-    # Detect WSL
     if "microsoft" in platform.uname().release.lower():
-        # Use Windows default browser via cmd.exe
         windows_path = str(path).replace("/mnt/c", "C:").replace("/", "\\")
         subprocess.run(["cmd.exe", "/c", "start", windows_path], shell=False)
     else:
-        # Normal behavior on macOS/Linux/Windows native
         webbrowser.open(f"file://{path}")
 
 
@@ -944,16 +936,16 @@ async def main():
         ],
     )
 
-    # Show the actual JSON payloads being sent to/from Ollama
+    ws_log_handler = WebSocketLogHandler()
+    ws_log_handler.setLevel(logging.INFO)
+    logging.getLogger().addHandler(ws_log_handler)
+
     logging.getLogger("httpx").setLevel(logging.INFO)
     logging.getLogger("langchain").setLevel(logging.DEBUG)
-
-    # If you want to see exactly what the MCP Server is saying to the Client
     logging.getLogger("mcp").setLevel(logging.DEBUG)
 
     logger = logging.getLogger("mcp_client")
 
-    # 2️⃣ MCP Server config
     client = MCPClient.from_dict({
         "mcpServers": {
             "local": {
@@ -967,7 +959,6 @@ async def main():
         }
     })
 
-    # 3️⃣ Load system prompt
     system_prompt_path = PROJECT_ROOT / "prompts/tool_usage_guide.md"
 
     if system_prompt_path.exists():
@@ -993,34 +984,25 @@ async def main():
 
     await ensure_ollama_running()
 
-    # 4️⃣ Initialize LLM
     llm = ChatOllama(
         model=model_name,
         temperature=0
     )
 
-    # 5️⃣ Create MCPAgent to initialize and get tools
     mcp_agent = MCPAgent(
         llm=llm,
         client=client,
-        max_steps=10,  # This won't be used, but needed for initialization
+        max_steps=10,
         system_prompt=SYSTEM_PROMPT
     )
 
     mcp_agent.debug = True
     await mcp_agent.initialize()
 
-    # Get the tools from MCPAgent
     tools = mcp_agent._tools
 
-    # logger.info(f"🛠 Found {len(tools)} MCP tools:")
-    # for t in tools:
-    #     logger.info(f"  - {t.name}: {t.description}")
-
-    # 6️⃣ Bind tools to LLM
     llm_with_tools = llm.bind_tools(tools)
 
-    # ADD THIS TEST HERE:
     logger.info("=" * 60)
     logger.info("🧪 TESTING TOOL BINDING, ALMOST THERE!")
     test_messages = [
@@ -1041,31 +1023,28 @@ async def main():
     logger.info(f"Response content: {test_response.content[:300]}")
     logger.info("=" * 60)
 
-    # 7️⃣ Create LangGraph agent with stop conditions
     agent = create_langgraph_agent(llm_with_tools, tools)
 
-    # Start both interfaces simultaneously
     print("\n🚀 Starting MCP Agent with dual interface support")
     print("=" * 60)
 
-    # Open browser
     index_path = PROJECT_ROOT / "index.html"
     open_browser_file(index_path)
 
     start_http_server(port=9000)
 
-    # Start WebSocket server (non-blocking)
     websocket_server = await start_websocket_server(agent, tools, logger, host="0.0.0.0", port=8765)
+    log_websocket_server = await start_log_websocket_server(host="0.0.0.0", port=8766)
 
     print("🖥️  CLI interface ready")
-    print("🌐 Browser interface ready at http://localhost:8765")
+    print("🌐 Browser interface ready at http://localhost:9000")
+    print("📊 Log streaming ready at ws://localhost:8766")
     print("=" * 60)
     print("\nBoth interfaces share the same conversation state!")
     print("Commands:")
     list_commands()
     print()
 
-    # Run CLI input loop (this will block until Ctrl+C)
     try:
         await cli_input_loop(agent, logger, tools, model_name)
     except KeyboardInterrupt:
@@ -1073,6 +1052,8 @@ async def main():
     finally:
         websocket_server.close()
         await websocket_server.wait_closed()
+        log_websocket_server.close()
+        await log_websocket_server.wait_closed()
 
 
 if __name__ == "__main__":

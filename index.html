@@ -5,18 +5,78 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MCP Browser Client</title>
     <style>
-        body {
-            font-family: sans-serif;
-            margin: 2rem;
-            display: flex;
-            flex-direction: column;
-            height: 90vh;
-            background: #f5f7fa; /* soft background */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
 
-        h1 {
-            color: #2c3e50; /* deep slate */
-            margin-bottom: 2rem;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: #f5f7fa;
+            overflow: hidden;
+        }
+
+        #header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        #header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        #topBar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        #modelSelect {
+            padding: 0.5rem;
+            font-size: 0.9rem;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            background: white;
+            cursor: pointer;
+        }
+
+        #logToggle {
+            padding: 0.5rem 1rem;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+
+        #logToggle:hover {
+            background: #2980b9;
+        }
+
+        #mainContainer {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        #chatContainer {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 2rem;
+            overflow: hidden;
         }
 
         #chat {
@@ -41,7 +101,6 @@
             font-size: 0.95rem;
         }
 
-        /* User bubble: blue gradient */
         .user {
             align-self: flex-end;
             background: linear-gradient(135deg, #4da3ff, #1c7dff);
@@ -49,7 +108,6 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.15);
         }
 
-        /* Assistant bubble: soft grey with border */
         .assistant {
             align-self: flex-start;
             background: #f0f2f5;
@@ -58,7 +116,6 @@
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
 
-        /* Thinking indicator */
         .thinking {
             align-self: flex-start;
             padding: 0.75rem 1rem;
@@ -115,6 +172,7 @@
             border: 1px solid #cbd5e1;
             background: #ffffff;
             box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
+            resize: none;
         }
 
         #input:focus {
@@ -123,7 +181,6 @@
             box-shadow: 0 0 0 2px rgba(77,163,255,0.3);
         }
 
-        /* Send button: modern blue */
         #sendBtn {
             padding: 0.5rem 1rem;
             font-size: 1rem;
@@ -149,54 +206,298 @@
             color: #555;
             height: 1.2rem;
             margin-top: 1rem;
+            font-size: 0.9rem;
         }
 
-        #topBar {
+        /* Log Panel Styles */
+        #logPanel {
+            width: 0;
+            background: #1e1e1e;
             display: flex;
-            justify-content: flex-start;
+            flex-direction: column;
+            transition: width 0.3s ease;
+            overflow: hidden;
+            border-left: 1px solid #3e3e3e;
+        }
+
+        #logPanel.open {
+            width: 500px;
+        }
+
+        #logHeader {
+            background: #2d2d2d;
+            padding: 1rem;
+            border-bottom: 2px solid #3e3e3e;
+            display: flex;
+            justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.75rem;
+        }
+
+        #logHeader h2 {
+            color: #569cd6;
+            font-size: 1rem;
+        }
+
+        .log-controls {
+            display: flex;
             gap: 0.5rem;
         }
 
-        #modelSelect {
-            padding: 0.35rem 0.5rem;
-            font-size: 0.9rem;
-            border-radius: 6px;
-            border: 1px solid #cbd5e1;
-            background: #ffffff;
-            box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
+        .log-btn {
+            padding: 0.35rem 0.7rem;
+            font-size: 0.8rem;
+            background: #0e639c;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
         }
 
-        #modelSelect:focus {
-            outline: none;
-            border-color: #4da3ff;
-            box-shadow: 0 0 0 2px rgba(77,163,255,0.3);
+        .log-btn:hover {
+            background: #1177bb;
         }
 
+        .log-btn.danger {
+            background: #d32f2f;
+        }
+
+        .log-btn.danger:hover {
+            background: #f44336;
+        }
+
+        #logFilters {
+            padding: 0.75rem 1rem;
+            background: #252525;
+            border-bottom: 1px solid #3e3e3e;
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 0.35rem 0.7rem;
+            font-size: 0.75rem;
+            background: #424242;
+            color: #d4d4d4;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+
+        .filter-btn.active {
+            opacity: 1;
+        }
+
+        .filter-btn.INFO.active {
+            background: #569cd6;
+        }
+
+        .filter-btn.WARNING.active {
+            background: #dcdcaa;
+            color: #1e1e1e;
+        }
+
+        .filter-btn.ERROR.active {
+            background: #f44747;
+        }
+
+        .filter-btn.DEBUG.active {
+            background: #608b4e;
+        }
+
+        #logContainer {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.8rem;
+        }
+
+        .log-entry {
+            padding: 0.4rem 0.6rem;
+            margin-bottom: 2px;
+            border-left: 3px solid transparent;
+            display: flex;
+            gap: 0.5rem;
+            line-height: 1.4;
+        }
+
+        .log-entry:hover {
+            background: #2d2d2d;
+        }
+
+        .log-entry.INFO {
+            border-left-color: #569cd6;
+        }
+
+        .log-entry.WARNING {
+            border-left-color: #dcdcaa;
+            background: rgba(220, 220, 170, 0.05);
+        }
+
+        .log-entry.ERROR {
+            border-left-color: #f44747;
+            background: rgba(244, 71, 71, 0.05);
+        }
+
+        .log-entry.DEBUG {
+            border-left-color: #608b4e;
+            opacity: 0.7;
+        }
+
+        .log-timestamp {
+            color: #858585;
+            white-space: nowrap;
+            font-size: 0.75rem;
+        }
+
+        .log-level {
+            font-weight: bold;
+            min-width: 60px;
+            white-space: nowrap;
+            font-size: 0.75rem;
+        }
+
+        .log-level.INFO {
+            color: #569cd6;
+        }
+
+        .log-level.WARNING {
+            color: #dcdcaa;
+        }
+
+        .log-level.ERROR {
+            color: #f44747;
+        }
+
+        .log-level.DEBUG {
+            color: #608b4e;
+        }
+
+        .log-message {
+            flex: 1;
+            word-break: break-word;
+            color: #d4d4d4;
+        }
+
+        .log-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .log-status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #f44336;
+        }
+
+        .log-status-indicator.connected {
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #424242;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4e4e4e;
+        }
+
+        #chat::-webkit-scrollbar-track {
+            background: #f5f7fa;
+        }
+
+        #chat::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+        }
+
+        @media (max-width: 1024px) {
+            #logPanel.open {
+                width: 400px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            #logPanel.open {
+                width: 100%;
+                position: absolute;
+                top: 0;
+                right: 0;
+                height: 100%;
+                z-index: 1000;
+            }
+        }
     </style>
 </head>
 <body>
-    <h1>MCP Browser Client</h1>
-
-    <div id="topBar">
-        <label for="modelSelect">Model:</label>
-        <select id="modelSelect">
-            <option value="llama3.1:8b">Llama 3.1 8B</option>
-            <option value="llama3.1:70b">Llama 3.1 70B</option>
-            <option value="qwen2.5:7b">Qwen 2.5 7B</option>
-            <option value="mistral:7b">Mistral 7B</option>
-        </select>
+    <div id="header">
+        <h1>🤖 MCP Browser Client</h1>
+        <div id="topBar">
+            <label for="modelSelect" style="color: white;">Model:</label>
+            <select id="modelSelect">
+                <option value="llama3.1:8b">Llama 3.1 8B</option>
+            </select>
+            <button id="logToggle" onclick="toggleLogPanel()">📊 Show Logs</button>
+        </div>
     </div>
 
-    <div id="chat"></div>
+    <div id="mainContainer">
+        <div id="chatContainer">
+            <div id="chat"></div>
 
-    <div id="inputRow">
-        <textarea id="input" placeholder="Type your message..."></textarea>
-        <button id="sendBtn" onclick="send()">Send</button>
+            <div id="inputRow">
+                <textarea id="input" placeholder="Type your message..."></textarea>
+                <button id="sendBtn" onclick="send()">Send</button>
+            </div>
+
+            <div id="status"></div>
+        </div>
+
+        <div id="logPanel">
+            <div id="logHeader">
+                <h2>📊 Live Logs</h2>
+                <div class="log-controls">
+                    <button class="log-btn danger" onclick="clearLogs()">Clear</button>
+                    <button class="log-btn" onclick="toggleAutoscroll()">
+                        <span id="autoscrollText">Auto</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="logFilters">
+                <button class="filter-btn DEBUG active" data-level="DEBUG" onclick="toggleLogFilter('DEBUG')">DEBUG</button>
+                <button class="filter-btn INFO active" data-level="INFO" onclick="toggleLogFilter('INFO')">INFO</button>
+                <button class="filter-btn WARNING active" data-level="WARNING" onclick="toggleLogFilter('WARNING')">WARNING</button>
+                <button class="filter-btn ERROR active" data-level="ERROR" onclick="toggleLogFilter('ERROR')">ERROR</button>
+                <div class="log-status">
+                    <div class="log-status-indicator" id="logStatusIndicator"></div>
+                    <span id="logStatusText" style="color: #858585;">Disconnected</span>
+                </div>
+            </div>
+
+            <div id="logContainer"></div>
+        </div>
     </div>
-
-    <div id="status"></div>
 
     <script>
         const status = document.getElementById("status");
@@ -214,12 +515,11 @@
         let chatHistory = loadHistory();
         let thinkingIndicator = null;
 
-        // -------------------------
-        // WebSocket connection
-        // -------------------------
-        const hostname = window.location.hostname || 'localhost';
-        const ws = new WebSocket(`ws://${hostname}:8765`);
-        console.log('Connecting to:', `ws://${hostname}:8765`);
+        // Log panel state
+        let logPanelOpen = false;
+        let logAutoscroll = true;
+        let logFilters = new Set(['DEBUG', 'INFO', 'WARNING', 'ERROR']);
+        let logWs = null;
 
         // -------------------------
         // Local storage helpers
@@ -234,10 +534,145 @@
         }
 
         // -------------------------
+        // Log Panel Functions
+        // -------------------------
+        function toggleLogPanel() {
+            logPanelOpen = !logPanelOpen;
+            const panel = document.getElementById('logPanel');
+            const button = document.getElementById('logToggle');
+
+            if (logPanelOpen) {
+                panel.classList.add('open');
+                button.textContent = '✖ Hide Logs';
+                if (!logWs || logWs.readyState !== WebSocket.OPEN) {
+                    connectLogWebSocket();
+                }
+            } else {
+                panel.classList.remove('open');
+                button.textContent = '📊 Show Logs';
+            }
+        }
+
+        function connectLogWebSocket() {
+            const hostname = window.location.hostname || 'localhost';
+            logWs = new WebSocket(`ws://${hostname}:8766`);
+
+            logWs.onopen = () => {
+                updateLogStatus(true);
+                console.log('Log WebSocket connected');
+            };
+
+            logWs.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'log') {
+                    addLogEntry(data);
+                }
+            };
+
+            logWs.onerror = (error) => {
+                console.error('Log WebSocket error:', error);
+                updateLogStatus(false);
+            };
+
+            logWs.onclose = () => {
+                updateLogStatus(false);
+                // Auto-reconnect if panel is still open
+                if (logPanelOpen) {
+                    setTimeout(connectLogWebSocket, 3000);
+                }
+            };
+        }
+
+        function updateLogStatus(connected) {
+            const indicator = document.getElementById('logStatusIndicator');
+            const text = document.getElementById('logStatusText');
+
+            if (connected) {
+                indicator.classList.add('connected');
+                text.textContent = 'Live';
+                text.style.color = '#4caf50';
+            } else {
+                indicator.classList.remove('connected');
+                text.textContent = 'Disconnected';
+                text.style.color = '#f44336';
+            }
+        }
+
+        function addLogEntry(entry) {
+            const container = document.getElementById('logContainer');
+
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${entry.level}`;
+            logEntry.dataset.level = entry.level;
+
+            // Apply filter
+            if (!logFilters.has(entry.level)) {
+                logEntry.style.display = 'none';
+            }
+
+            const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+
+            logEntry.innerHTML = `
+                <span class="log-timestamp">${timestamp}</span>
+                <span class="log-level ${entry.level}">${entry.level}</span>
+                <span class="log-message">${escapeHtml(entry.message)}</span>
+            `;
+
+            container.appendChild(logEntry);
+
+            // Keep only last 500 logs for performance
+            while (container.children.length > 500) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (logAutoscroll) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logContainer').innerHTML = '';
+        }
+
+        function toggleAutoscroll() {
+            logAutoscroll = !logAutoscroll;
+            document.getElementById('autoscrollText').textContent = logAutoscroll ? 'Auto' : 'Manual';
+        }
+
+        function toggleLogFilter(level) {
+            const btn = document.querySelector(`.filter-btn[data-level="${level}"]`);
+
+            if (logFilters.has(level)) {
+                logFilters.delete(level);
+                btn.classList.remove('active');
+            } else {
+                logFilters.add(level);
+                btn.classList.add('active');
+            }
+
+            // Update visibility
+            document.querySelectorAll('.log-entry').forEach(entry => {
+                const entryLevel = entry.dataset.level;
+                entry.style.display = logFilters.has(entryLevel) ? 'flex' : 'none';
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // -------------------------
         // Thinking indicator
         // -------------------------
         function showThinking() {
-            if (thinkingIndicator) return; // Already showing
+            if (thinkingIndicator) return;
 
             thinkingIndicator = document.createElement("div");
             thinkingIndicator.className = "thinking";
@@ -254,8 +689,12 @@
         }
 
         // -------------------------
-        // WebSocket events
+        // WebSocket connection for chat
         // -------------------------
+        const hostname = window.location.hostname || 'localhost';
+        const ws = new WebSocket(`ws://${hostname}:8765`);
+        console.log('Connecting to:', `ws://${hostname}:8765`);
+
         ws.onerror = (event) => {
             status.textContent = "WebSocket error";
             hideThinking();
@@ -271,19 +710,13 @@
             sendBtn.disabled = false;
             status.textContent = "Connected";
 
-            // 1. Ask server for chat history
             ws.send(JSON.stringify({ type: "history_request" }));
-
-            // 2. Ask server for available models + last used model
             ws.send(JSON.stringify({ type: "list_models" }));
         };
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
 
-            // -------------------------
-            // CLI user message (from terminal)
-            // -------------------------
             if (data.type === "cli_user_message") {
                 addMessage(data.text, "user");
                 showThinking();
@@ -293,9 +726,6 @@
                 return;
             }
 
-            // -------------------------
-            // Web UI user message (from another browser/client)
-            // -------------------------
             if (data.type === "user_message") {
                 addMessage(data.text, "user");
                 showThinking();
@@ -305,9 +735,6 @@
                 return;
             }
 
-            // -------------------------
-            // CLI assistant message
-            // -------------------------
             if (data.type === "cli_assistant_message") {
                 hideThinking();
                 addMessage(data.text, "assistant");
@@ -324,9 +751,6 @@
                 return;
             }
 
-            // -------------------------
-            // Model switched
-            // -------------------------
             if (data.type === "model_switched") {
                 status.textContent = "Model: " + data.model;
                 sendBtn.disabled = false;
@@ -335,9 +759,6 @@
                 return;
             }
 
-            // -------------------------
-            // History sync
-            // -------------------------
             if (data.type === "history_sync") {
                 const history = data.history;
 
@@ -355,15 +776,12 @@
                     chat.innerHTML = "";
                     chatHistory.forEach(msg => addMessage(msg.text, msg.role));
 
-                    // Check if we're waiting for a response AFTER history is loaded
                     if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === "user") {
-                        // Still waiting for assistant response
                         isProcessing = true;
                         sendBtn.disabled = true;
                         status.textContent = "Processing…";
                         showThinking();
                     } else {
-                        // All caught up
                         isProcessing = false;
                         sendBtn.disabled = false;
                         status.textContent = "Connected";
@@ -374,9 +792,6 @@
                 return;
             }
 
-            // -------------------------
-            // Assistant message
-            // -------------------------
             if (data.type === "assistant_message") {
                 hideThinking();
                 addMessage(data.text, "assistant");
@@ -384,14 +799,13 @@
                 isProcessing = false;
                 sendBtn.disabled = false;
 
-                // Show model name in status after processing is done
                 if (modelSelect.value) {
                     status.textContent = "Model: " + modelSelect.value;
                 } else {
                     status.textContent = "Connected";
                 }
 
-                return; // Add this return to prevent fall-through
+                return;
             }
 
             if (data.type === "models_list") {
@@ -407,7 +821,6 @@
 
                 if (data.last_used && data.models.includes(data.last_used)) {
                     select.value = data.last_used;
-                    // Only update status if NOT currently processing
                     if (!isProcessing) {
                         status.textContent = "Model: " + data.last_used;
                     }
