@@ -2,6 +2,7 @@ httpx
 mcp
 mcp-use
 psutil
+prompt_toolkit
 gputil
 pathlib2
 typing-extensions

@@ -3,6 +3,7 @@ CLI Module
 Handles command-line interface and user input
 """
 
+from prompt_toolkit import prompt
 import asyncio
 import threading
 from queue import Queue
@@ -27,7 +28,7 @@ def input_thread(input_queue, stop_event):
     """Thread to handle blocking input() calls"""
     while not stop_event.is_set():
         try:
-            query = input("> ")
+            query = prompt("> ")
             input_queue.put(query)
         except (EOFError, KeyboardInterrupt):
             break
