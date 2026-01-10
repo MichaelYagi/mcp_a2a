@@ -201,6 +201,18 @@
             cursor: not-allowed;
         }
 
+        /* Touch-friendly buttons */
+        @media (hover: none) and (pointer: coarse) {
+            button, .log-btn, .filter-btn {
+                min-height: 44px;
+                touch-action: manipulation;
+            }
+
+            #sendBtn {
+                min-width: 80px;
+            }
+        }
+
         #status {
             font-style: italic;
             color: #555;
@@ -263,6 +275,14 @@
 
         .log-btn.danger:hover {
             background: #f44336;
+        }
+
+        .mobile-close {
+            background: #424242 !important;
+        }
+
+        .mobile-close:hover {
+            background: #555 !important;
         }
 
         #logFilters {
@@ -438,13 +458,173 @@
         }
 
         @media (max-width: 768px) {
+            body {
+                overflow: hidden;
+            }
+
+            #header {
+                padding: 0.75rem 1rem;
+            }
+
+            #header h1 {
+                font-size: 1.1rem;
+            }
+
+            #topBar {
+                gap: 0.5rem;
+            }
+
+            #modelSelect {
+                padding: 0.4rem;
+                font-size: 0.85rem;
+            }
+
+            #logToggle {
+                padding: 0.4rem 0.7rem;
+                font-size: 0.85rem;
+            }
+
+            #chatContainer {
+                padding: 1rem;
+            }
+
+            .msg {
+                max-width: 85%;
+                font-size: 0.9rem;
+                padding: 0.6rem 0.8rem;
+            }
+
+            #input {
+                height: 50px;
+                font-size: 16px; /* Prevents iOS zoom on focus */
+            }
+
+            #sendBtn {
+                padding: 0.4rem 0.8rem;
+                font-size: 0.95rem;
+            }
+
+            #modelSelect {
+                font-size: 16px; /* Prevents iOS zoom on focus */
+            }
+
+            /* Log panel takes full screen on mobile */
             #logPanel.open {
                 width: 100%;
-                position: absolute;
+                position: fixed;
                 top: 0;
+                left: 0;
                 right: 0;
+                bottom: 0;
                 height: 100%;
                 z-index: 1000;
+                border-left: none;
+            }
+
+            #logHeader {
+                padding: 0.75rem;
+            }
+
+            #logHeader h2 {
+                font-size: 0.95rem;
+            }
+
+            .log-controls {
+                flex-wrap: wrap;
+            }
+
+            .mobile-close {
+                display: inline-block !important;
+                width: 100%;
+                margin-top: 0.5rem;
+            }
+
+            .log-btn {
+                padding: 0.3rem 0.6rem;
+                font-size: 0.75rem;
+            }
+
+            #logFilters {
+                padding: 0.5rem;
+                gap: 0.4rem;
+            }
+
+            .filter-btn {
+                padding: 0.3rem 0.6rem;
+                font-size: 0.7rem;
+            }
+
+            #logContainer {
+                font-size: 0.75rem;
+            }
+
+            .log-entry {
+                padding: 0.3rem 0.5rem;
+                gap: 0.4rem;
+            }
+
+            .log-timestamp {
+                font-size: 0.7rem;
+            }
+
+            .log-level {
+                font-size: 0.7rem;
+                min-width: 50px;
+            }
+
+            .log-status {
+                font-size: 0.75rem;
+            }
+        }
+
+        /* Extra small phones */
+        @media (max-width: 480px) {
+            #header h1 {
+                font-size: 1rem;
+            }
+
+            #topBar {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.3rem;
+            }
+
+            #topBar label {
+                display: none;
+            }
+
+            #modelSelect {
+                width: 100%;
+                font-size: 0.8rem;
+            }
+
+            #logToggle {
+                width: 100%;
+                font-size: 0.8rem;
+            }
+
+            .msg {
+                max-width: 90%;
+                font-size: 0.85rem;
+            }
+
+            #logHeader {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.5rem;
+            }
+
+            #logFilters {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-btn {
+                width: 100%;
+            }
+
+            .log-status {
+                width: 100%;
             }
         }
     </style>
@@ -481,6 +661,7 @@
                     <button class="log-btn" onclick="toggleAutoscroll()">
                         <span id="autoscrollText">Auto</span>
                     </button>
+                    <button class="log-btn mobile-close" onclick="toggleLogPanel()" style="display: none;">✖ Close</button>
                 </div>
             </div>
 
@@ -521,6 +702,22 @@
         let logFilters = new Set(['DEBUG', 'INFO', 'WARNING', 'ERROR']);
         let logWs = null;
 
+        // Check if mobile
+        function isMobile() {
+            return window.innerWidth <= 768;
+        }
+
+        // Update mobile close button visibility
+        function updateMobileCloseButton() {
+            const mobileCloseBtn = document.querySelector('.mobile-close');
+            if (mobileCloseBtn) {
+                mobileCloseBtn.style.display = isMobile() ? 'inline-block' : 'none';
+            }
+        }
+
+        // Listen for window resize
+        window.addEventListener('resize', updateMobileCloseButton);
+
         // -------------------------
         // Local storage helpers
         // -------------------------
@@ -544,6 +741,7 @@
             if (logPanelOpen) {
                 panel.classList.add('open');
                 button.textContent = '✖ Hide Logs';
+                updateMobileCloseButton();
                 if (!logWs || logWs.readyState !== WebSocket.OPEN) {
                     connectLogWebSocket();
                 }

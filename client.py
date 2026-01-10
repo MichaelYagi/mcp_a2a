@@ -43,6 +43,7 @@ agent = None
 # ============================================================================
 
 LOG_WEBSOCKET_CLIENTS = set()
+MAIN_EVENT_LOOP = None  # Will be set in main()
 
 
 class WebSocketLogHandler(logging.Handler):
@@ -58,7 +59,12 @@ class WebSocketLogHandler(logging.Handler):
             }
 
             # Broadcast to all connected log clients
-            asyncio.create_task(self.broadcast_log(log_entry))
+            # Use run_coroutine_threadsafe to schedule the coroutine on the main event loop
+            if MAIN_EVENT_LOOP is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_log(log_entry),
+                    MAIN_EVENT_LOOP
+                )
         except Exception:
             self.handleError(record)
 
@@ -70,6 +76,7 @@ class WebSocketLogHandler(logging.Handler):
         """Send log entry to all connected WebSocket clients"""
         if LOG_WEBSOCKET_CLIENTS:
             message = json.dumps({"type": "log", **log_entry})
+            # Gather with return_exceptions to prevent one failed send from breaking others
             await asyncio.gather(
                 *[ws.send(message) for ws in LOG_WEBSOCKET_CLIENTS],
                 return_exceptions=True
@@ -921,6 +928,11 @@ def open_browser_file(path: Path):
 
 
 async def main():
+    global MAIN_EVENT_LOOP
+
+    # Capture the main event loop for use in the log handler
+    MAIN_EVENT_LOOP = asyncio.get_running_loop()
+
     load_dotenv()
 
     PROJECT_ROOT = Path(__file__).resolve().parent
