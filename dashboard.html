@@ -1,84 +1,648 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>MCP Tool Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MCP Dashboard - Performance Metrics</title>
     <style>
-        /* Styled similarly to a standard index page */
-        body { font-family: sans-serif; margin: 20px; background: #f4f4f9; color: #333; }
-        .container { max-width: 1200px; margin: auto; }
-        .nav { margin-bottom: 20px; }
-        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
-        .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
-        .stat-card h3 { margin: 0; font-size: 0.9em; color: #666; }
-        .stat-card p { font-size: 1.8em; font-weight: bold; margin: 10px 0 0; }
-        .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
-        .chart-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .full-width { grid-column: span 2; }
-        a { color: #007bff; text-decoration: none; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: #f5f7fa;
+            overflow: hidden;
+        }
+
+        #header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        #header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        #topBar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        #backBtn {
+            padding: 0.5rem 1rem;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        #backBtn:hover {
+            background: #2980b9;
+        }
+
+        #mainContainer {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2rem;
+        }
+
+        .status-bar {
+            background: white;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #f44336;
+        }
+
+        .status-indicator.connected {
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .metric-card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+
+        .metric-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .metric-icon {
+            font-size: 1.5rem;
+        }
+
+        .metric-title {
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-subtitle {
+            font-size: 0.85rem;
+            color: #999;
+        }
+
+        .metric-error {
+            color: #f44336;
+            font-weight: 600;
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            margin-bottom: 2rem;
+        }
+
+        .chart-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .tool-card {
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 1rem;
+            border-left: 4px solid #3498db;
+        }
+
+        .tool-name {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+        }
+
+        .tool-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .tool-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .tool-stat-label {
+            font-size: 0.75rem;
+            color: #999;
+            text-transform: uppercase;
+        }
+
+        .tool-stat-value {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .error-badge {
+            background: #ffebee;
+            color: #c62828;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 3rem;
+            color: #999;
+            font-style: italic;
+        }
+
+        /* Scrollbar Styles */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f5f7fa;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            #header {
+                padding: 0.75rem 1rem;
+            }
+
+            #header h1 {
+                font-size: 1.1rem;
+            }
+
+            #mainContainer {
+                padding: 1rem;
+            }
+
+            .metrics-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+
+            .metric-card {
+                padding: 1rem;
+            }
+
+            .metric-value {
+                font-size: 2rem;
+            }
+
+            .chart-container {
+                padding: 1rem;
+            }
+
+            .chart-wrapper {
+                height: 200px;
+            }
+
+            .tools-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            #header h1 {
+                font-size: 1rem;
+            }
+
+            #backBtn {
+                padding: 0.4rem 0.7rem;
+                font-size: 0.85rem;
+            }
+
+            .metric-value {
+                font-size: 1.75rem;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="nav"><a href="index.html">← Back to Chat</a></div>
-        <h1>MCP System Performance</h1>
+    <div id="header">
+        <h1>📊 MCP Performance Dashboard</h1>
+        <div id="topBar">
+            <a href="index.html" id="backBtn">← Back to Chat</a>
+        </div>
+    </div>
 
-        <div class="stats-grid">
-            <div class="stat-card"><h3>Tool Executions</h3><p id="total-tools">0</p></div>
-            <div class="stat-card"><h3>LLM Requests</h3><p id="total-llm">0</p></div>
-            <div class="stat-card"><h3>Agent Runs</h3><p id="total-agent">0</p></div>
-            <div class="stat-card"><h3>Error Rate</h3><p id="error-rate">0%</p></div>
+    <div id="mainContainer">
+        <div class="status-bar">
+            <div class="status-indicator" id="statusIndicator"></div>
+            <div class="status-text" id="statusText">Connecting to metrics stream...</div>
         </div>
 
-        <div class="charts-grid">
-            <div class="chart-container full-width">
+        <!-- Key Metrics Grid -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-icon">🔧</div>
+                    <div class="metric-title">Tool Calls</div>
+                </div>
+                <div class="metric-value" id="toolCallsValue">0</div>
+                <div class="metric-subtitle">Total executions</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-icon">🤖</div>
+                    <div class="metric-title">LLM Calls</div>
+                </div>
+                <div class="metric-value" id="llmCallsValue">0</div>
+                <div class="metric-subtitle">Total requests</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-icon">⚡</div>
+                    <div class="metric-title">Agent Runs</div>
+                </div>
+                <div class="metric-value" id="agentRunsValue">0</div>
+                <div class="metric-subtitle">Total executions</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-icon">⚠️</div>
+                    <div class="metric-title">Error Rate</div>
+                </div>
+                <div class="metric-value metric-error" id="errorRateValue">0%</div>
+                <div class="metric-subtitle"><span id="totalErrorsValue">0</span> overall errors</div>
+            </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="chart-container">
+            <div class="chart-header">
+                <div class="chart-icon">📈</div>
+                <div class="chart-title">Agent Performance Over Time</div>
+            </div>
+            <div class="chart-wrapper">
                 <canvas id="agentChart"></canvas>
             </div>
-            <div class="chart-container">
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-header">
+                <div class="chart-icon">🧠</div>
+                <div class="chart-title">LLM Response Times</div>
+            </div>
+            <div class="chart-wrapper">
                 <canvas id="llmChart"></canvas>
             </div>
-            <div class="chart-container">
-                <canvas id="toolChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-header">
+                <div class="chart-icon">🛠️</div>
+                <div class="chart-title">Tool Performance</div>
+            </div>
+            <div id="toolsContainer" class="tools-grid">
+                <div class="no-data">No tool data available yet</div>
             </div>
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>
-        const ws = new WebSocket(`ws://${window.location.hostname}:8765`);
+        let ws = null;
+        let metricsData = null;
+        let updateInterval = null;
 
-        // Initialize Charts
-        const createChart = (id, label, color) => new Chart(document.getElementById(id), {
-            type: 'line',
-            data: { labels: [], datasets: [{ label: label, data: [], borderColor: color, fill: false }] },
-            options: { responsive: true, scales: { y: { beginAtZero: true } } }
-        });
+        // Chart instances
+        let agentChart = null;
+        let llmChart = null;
 
-        const agentChart = createChart('agentChart', 'Agent Latency (s)', '#4bc0c0');
-        const llmChart = createChart('llmChart', 'LLM Latency (s)', '#ff6384');
-        const toolChart = createChart('toolChart', 'Tool Latency (s)', '#ffcd56');
+        // Initialize charts
+        function initCharts() {
+            const chartConfig = {
+                type: 'line',
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toFixed(2) + 's';
+                                }
+                            }
+                        },
+                        x: {
+                            display: false
+                        }
+                    }
+                }
+            };
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === "metrics") {
-                // Update Stat Cards
-                document.getElementById('total-tools').innerText = data.tools.total_calls;
-                document.getElementById('total-llm').innerText = data.llm.calls;
-                document.getElementById('total-agent').innerText = data.agent.runs;
-                document.getElementById('error-rate').innerText = data.agent.error_rate + "%";
+            // Agent Chart
+            const agentCtx = document.getElementById('agentChart').getContext('2d');
+            agentChart = new Chart(agentCtx, {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Agent Response Time (s)',
+                        data: [],
+                        borderColor: '#3498db',
+                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                }
+            });
 
-                // Update Charts (showing recent history)
-                const updateChart = (chart, times) => {
-                    chart.data.labels = times.map((_, i) => i);
-                    chart.data.datasets[0].data = times;
-                    chart.update('none');
-                };
-                updateChart(agentChart, data.agent.times);
-                updateChart(llmChart, data.llm.times);
-                // For tools, this visualizes the aggregate per-tool data
-                updateChart(toolChart, data.agent.times.map((_, i) => data.llm.times[i] || 0));
+            // LLM Chart
+            const llmCtx = document.getElementById('llmChart').getContext('2d');
+            llmChart = new Chart(llmCtx, {
+                ...chartConfig,
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'LLM Response Time (s)',
+                        data: [],
+                        borderColor: '#9b59b6',
+                        backgroundColor: 'rgba(155, 89, 182, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                }
+            });
+
+            console.log('✅ Charts initialized');
+        }
+
+        // Update metrics display
+        function updateMetrics(data) {
+            console.log('📊 Updating metrics:', data);
+            metricsData = data;
+
+            // Update key metrics
+            document.getElementById('toolCallsValue').textContent = data.tools.total_calls.toLocaleString();
+            document.getElementById('llmCallsValue').textContent = data.llm.calls.toLocaleString();
+            document.getElementById('agentRunsValue').textContent = data.agent.runs.toLocaleString();
+            document.getElementById('errorRateValue').textContent = data.agent.error_rate.toFixed(2) + '%';
+            document.getElementById('totalErrorsValue').textContent = data.overall_errors.toLocaleString();
+
+            // Update charts
+            updateAgentChart(data.agent.times);
+            updateLLMChart(data.llm.times);
+            updateToolsDisplay(data.tools.per_tool);
+        }
+
+        // Update Agent Chart
+        function updateAgentChart(times) {
+            if (!agentChart || !times) return;
+
+            const labels = times.map((_, i) => i + 1);
+            agentChart.data.labels = labels;
+            agentChart.data.datasets[0].data = times;
+            agentChart.update('none');
+        }
+
+        // Update LLM Chart
+        function updateLLMChart(times) {
+            if (!llmChart || !times) return;
+
+            const labels = times.map((_, i) => i + 1);
+            llmChart.data.labels = labels;
+            llmChart.data.datasets[0].data = times;
+            llmChart.update('none');
+        }
+
+        // Update Tools Display
+        function updateToolsDisplay(toolsData) {
+            const container = document.getElementById('toolsContainer');
+
+            if (!toolsData || Object.keys(toolsData).length === 0) {
+                container.innerHTML = '<div class="no-data">No tool data available yet</div>';
+                return;
             }
-        };
+
+            container.innerHTML = '';
+
+            // Sort tools by number of calls (descending)
+            const sortedTools = Object.entries(toolsData).sort((a, b) => b[1].calls - a[1].calls);
+
+            sortedTools.forEach(([toolName, stats]) => {
+                const card = document.createElement('div');
+                card.className = 'tool-card';
+
+                const errorBadge = stats.errors > 0
+                    ? `<span class="error-badge">${stats.errors} errors</span>`
+                    : '';
+
+                card.innerHTML = `
+                    <div class="tool-name">${toolName} ${errorBadge}</div>
+                    <div class="tool-stats">
+                        <div class="tool-stat">
+                            <div class="tool-stat-label">Calls</div>
+                            <div class="tool-stat-value">${stats.calls.toLocaleString()}</div>
+                        </div>
+                        <div class="tool-stat">
+                            <div class="tool-stat-label">Avg Time</div>
+                            <div class="tool-stat-value">${stats.avg_time.toFixed(2)}s</div>
+                        </div>
+                        <div class="tool-stat">
+                            <div class="tool-stat-label">Errors</div>
+                            <div class="tool-stat-value ${stats.errors > 0 ? 'metric-error' : ''}">${stats.errors}</div>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        // Update connection status
+        function updateStatus(connected) {
+            const indicator = document.getElementById('statusIndicator');
+            const text = document.getElementById('statusText');
+
+            if (connected) {
+                indicator.classList.add('connected');
+                text.textContent = 'Live metrics stream active';
+            } else {
+                indicator.classList.remove('connected');
+                text.textContent = 'Disconnected - Attempting to reconnect...';
+            }
+        }
+
+        // Request metrics
+        function requestMetrics() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log('📨 Requesting metrics...');
+                ws.send(JSON.stringify({ type: 'metrics_request' }));
+            }
+        }
+
+        // Connect to WebSocket
+        function connectWebSocket() {
+            const hostname = window.location.hostname || 'localhost';
+            const wsUrl = `ws://${hostname}:8765`;
+
+            console.log('🔌 Connecting to metrics WebSocket:', wsUrl);
+
+            try {
+                ws = new WebSocket(wsUrl);
+            } catch (error) {
+                console.error('❌ Failed to create WebSocket:', error);
+                updateStatus(false);
+                setTimeout(connectWebSocket, 3000);
+                return;
+            }
+
+            ws.onopen = () => {
+                console.log('✅ Connected to metrics WebSocket');
+                updateStatus(true);
+
+                // Request metrics immediately
+                requestMetrics();
+
+                // Clear any existing interval
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                }
+
+                // Request metrics every 2 seconds
+                updateInterval = setInterval(requestMetrics, 2000);
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('📥 Received message:', data.type);
+
+                if (data.type === 'metrics_response') {
+                    console.log('📊 Got metrics response');
+                    updateMetrics(data.metrics);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('❌ WebSocket error:', error);
+                updateStatus(false);
+            };
+
+            ws.onclose = () => {
+                console.log('🔌 WebSocket closed. Reconnecting in 3 seconds...');
+                updateStatus(false);
+
+                // Clear interval
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                    updateInterval = null;
+                }
+
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        // Initialize
+        console.log('🚀 Dashboard starting...');
+        initCharts();
+        connectWebSocket();
     </script>
 </body>
 </html>

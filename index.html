@@ -624,6 +624,24 @@
             background: rgba(255, 255, 255, 0.3);
         }
 
+        /* Add after other button styles */
+        #dashboardBtn {
+            padding: 0.5rem 1rem;
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        #dashboardBtn:hover {
+            background: #229954;
+        }
+
         /* Tablet */
         @media (max-width: 1024px) {
             #logPanel.open {
@@ -651,6 +669,11 @@
 
             #topBar {
                 gap: 0.5rem;
+            }
+
+            #dashboardBtn {
+                padding: 0.4rem 0.7rem;
+                font-size: 0.85rem;
             }
 
             #modelSelect {
@@ -841,6 +864,11 @@
                 font-size: 0.8rem;
             }
 
+            #dashboardBtn {
+                width: 100%;
+                font-size: 0.8rem;
+            }
+
             .msg {
                 max-width: 90%;
                 font-size: 0.85rem;
@@ -887,6 +915,7 @@
             </select>
             <button id="monitorToggle" onclick="toggleSystemMonitor()">📊 System</button>
             <button id="logToggle" onclick="toggleLogPanel()">📋 Logs</button>
+            <a href="dashboard.html" id="dashboardBtn">📈 Dashboard</a>
         </div>
     </div>
 

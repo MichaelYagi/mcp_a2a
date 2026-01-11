@@ -13,7 +13,6 @@ from langchain_core.messages import HumanMessage
 # Import system monitor conditionally
 try:
     from tools.system_monitor import system_monitor_loop
-
     SYSTEM_MONITOR_AVAILABLE = True
 except ImportError:
     SYSTEM_MONITOR_AVAILABLE = False
@@ -84,6 +83,30 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                 await websocket.send(json.dumps({
                     "type": "history_sync",
                     "history": history_payload
+                }))
+                continue
+
+            if data.get("type") == "metrics_request":
+                # Try to import metrics with fallback
+                try:
+                    from client.metrics import prepare_metrics
+                    metrics_data = prepare_metrics()
+                except ImportError:
+                    try:
+                        from metrics import prepare_metrics
+                        metrics_data = prepare_metrics()
+                    except ImportError:
+                        # Return empty metrics if not available
+                        metrics_data = {
+                            "agent": {"runs": 0, "errors": 0, "error_rate": 0, "avg_time": 0, "times": []},
+                            "llm": {"calls": 0, "errors": 0, "avg_time": 0, "times": []},
+                            "tools": {"total_calls": 0, "total_errors": 0, "per_tool": {}},
+                            "overall_errors": 0
+                        }
+
+                await websocket.send(json.dumps({
+                    "type": "metrics_response",
+                    "metrics": metrics_data
                 }))
                 continue
 

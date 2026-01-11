@@ -19,3 +19,4 @@ knowledge/
 /.vscode
 /rag_db/
 /debug_ingest.py
+/test_metrics.py

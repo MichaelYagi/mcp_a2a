@@ -122,7 +122,7 @@ async def main():
 
     # Test tool binding
     logger.info("=" * 60)
-    logger.info("🧪 TESTING TOOL BINDING")
+    logger.info("🧪 TESTING TOOL BINDING, HOLD TIGHT!")
     test_messages = [
         SystemMessage(content="You have access to tools. Call the semantic_media_search_text tool to find movies."),
         HumanMessage(content="find action movies")
