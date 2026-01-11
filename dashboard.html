@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MCP Tool Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* Styled similarly to a standard index page */
+        body { font-family: sans-serif; margin: 20px; background: #f4f4f9; color: #333; }
+        .container { max-width: 1200px; margin: auto; }
+        .nav { margin-bottom: 20px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
+        .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+        .stat-card h3 { margin: 0; font-size: 0.9em; color: #666; }
+        .stat-card p { font-size: 1.8em; font-weight: bold; margin: 10px 0 0; }
+        .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        .chart-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .full-width { grid-column: span 2; }
+        a { color: #007bff; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav"><a href="index.html">← Back to Chat</a></div>
+        <h1>MCP System Performance</h1>
+
+        <div class="stats-grid">
+            <div class="stat-card"><h3>Tool Executions</h3><p id="total-tools">0</p></div>
+            <div class="stat-card"><h3>LLM Requests</h3><p id="total-llm">0</p></div>
+            <div class="stat-card"><h3>Agent Runs</h3><p id="total-agent">0</p></div>
+            <div class="stat-card"><h3>Error Rate</h3><p id="error-rate">0%</p></div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-container full-width">
+                <canvas id="agentChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="llmChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="toolChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket(`ws://${window.location.hostname}:8765`);
+
+        // Initialize Charts
+        const createChart = (id, label, color) => new Chart(document.getElementById(id), {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: label, data: [], borderColor: color, fill: false }] },
+            options: { responsive: true, scales: { y: { beginAtZero: true } } }
+        });
+
+        const agentChart = createChart('agentChart', 'Agent Latency (s)', '#4bc0c0');
+        const llmChart = createChart('llmChart', 'LLM Latency (s)', '#ff6384');
+        const toolChart = createChart('toolChart', 'Tool Latency (s)', '#ffcd56');
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "metrics") {
+                // Update Stat Cards
+                document.getElementById('total-tools').innerText = data.tools.total_calls;
+                document.getElementById('total-llm').innerText = data.llm.calls;
+                document.getElementById('total-agent').innerText = data.agent.runs;
+                document.getElementById('error-rate').innerText = data.agent.error_rate + "%";
+
+                // Update Charts (showing recent history)
+                const updateChart = (chart, times) => {
+                    chart.data.labels = times.map((_, i) => i);
+                    chart.data.datasets[0].data = times;
+                    chart.update('none');
+                };
+                updateChart(agentChart, data.agent.times);
+                updateChart(llmChart, data.llm.times);
+                // For tools, this visualizes the aggregate per-tool data
+                updateChart(toolChart, data.agent.times.map((_, i) => data.llm.times[i] || 0));
+            }
+        };
+    </script>
+</body>
+</html>

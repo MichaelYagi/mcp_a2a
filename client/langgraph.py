@@ -17,7 +17,8 @@ class AgentState(TypedDict):
     """State that gets passed between nodes in the graph"""
     messages: Annotated[Sequence[BaseMessage], operator.add]
     tools: dict
-    llm: object  # LLM instance for RAG node
+    llm: object
+    ingest_completed: bool
 
 
 def router(state):
@@ -27,8 +28,10 @@ def router(state):
     logger = logging.getLogger("mcp_client")
     logger.info(f"🎯 Router: Last message type = {type(last_message).__name__}")
 
+    # Check if we just completed an ingest operation
+    ingest_completed = state.get("ingest_completed", False)
+
     # Check if user's ORIGINAL message requested RAG (before LLM processing)
-    # Look back through messages to find the most recent HumanMessage
     user_message = None
     for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
@@ -39,13 +42,22 @@ def router(state):
         content = user_message.content.lower()
         logger.info(f"🎯 Router: Checking user's original message: {content[:100]}")
 
-        # Check for ingestion request
-        if "ingest" in content:
-            logger.info(f"🎯 Router: User requested INGEST - routing there")
-            return "ingest"
+        # Check for ingestion request - but only if not already completed
+        if "ingest" in content and not ingest_completed:
+            # Check if user wants to stop after one batch
+            if any(stop_word in content for stop_word in ["stop", "then stop", "don't continue", "don't go on"]):
+                logger.info(f"🎯 Router: User requested ONE-TIME ingest - routing there")
+                return "ingest"
+            else:
+                logger.info(f"🎯 Router: User requested INGEST - routing there")
+                return "ingest"
+        elif "ingest" in content and ingest_completed:
+            logger.info(f"🎯 Router: Ingest already completed - skipping to END")
+            return "continue"
 
         # Check for EXPLICIT RAG requests (highest priority)
-        if any(keyword in content for keyword in ["using rag", "use rag", "rag tool", "with rag", "search rag", "query rag"]):
+        if any(keyword in content for keyword in
+               ["using rag", "use rag", "rag tool", "with rag", "search rag", "query rag"]):
             logger.info(f"🎯 Router: User explicitly requested RAG - routing there")
             return "rag"
 
@@ -58,7 +70,6 @@ def router(state):
             return "tools"
 
     # Check for RAG-style questions (knowledge base queries)
-    # Only if it's still a user message and NOT about media search
     if isinstance(last_message, HumanMessage):
         content = last_message.content.lower()
         if not any(keyword in content for keyword in ["movie", "plex", "search", "find", "show", "media"]):
@@ -69,7 +80,6 @@ def router(state):
     # Default: continue with normal agent completion
     logger.info(f"🎯 Router: Continuing to END (normal completion)")
     return "continue"
-
 
 async def rag_node(state):
     """Search RAG and provide context to answer the question"""
@@ -358,12 +368,15 @@ def create_langgraph_agent(llm_with_tools, tools):
             for tc in response.tool_calls:
                 logger.info(f"🔧   Tool: {tc.get('name', 'unknown')}, Args: {tc.get('args', {})}")
         else:
-            logger.info(f"🔧 No tool calls. Response: {response.content[:200]}")
+            # Log the FULL response content
+            content = response.content if hasattr(response, 'content') else str(response)
+            logger.info(f"🔧 No tool calls. Full response: {content}")  # Changed from [:200]
 
         return {
             "messages": messages + [response],
             "tools": state.get("tools", {}),
             "llm": state.get("llm"),
+            "ingest_completed": state.get("ingest_completed", False),
         }
 
     async def ingest_node(state: AgentState):
@@ -381,10 +394,27 @@ def create_langgraph_agent(llm_with_tools, tools):
                 "messages": state["messages"] + [msg],
                 "tools": state.get("tools", {}),
                 "llm": state.get("llm"),
+                "ingest_completed": state.get("ingest_completed", False),
             }
 
         try:
-            result = await ingest_tool.ainvoke({"limit": 5})
+            logger.info("📥 Starting ingest operation...")
+            limit = 5  # default
+            messages = state["messages"]
+
+            # Find the most recent AIMessage with tool_calls
+            for msg in reversed(messages):
+                if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        if tool_call.get('name') == 'plex_ingest_batch':
+                            args = tool_call.get('args', {})
+                            limit = args.get('limit', 5)
+                            logger.info(f"📥 Using limit={limit} from LLM tool call")
+                            break
+                    break
+
+            logger.info(f"📥 Starting ingest operation with limit={limit}...")
+            result = await ingest_tool.ainvoke({"limit": limit})
 
             if isinstance(result, str) and result.startswith('[TextContent('):
                 import re
@@ -401,6 +431,7 @@ def create_langgraph_agent(llm_with_tools, tools):
                         "messages": state["messages"] + [msg],
                         "tools": state.get("tools", {}),
                         "llm": state.get("llm"),
+                        "ingest_completed": True,  # Mark as completed even on error
                     }
 
             if isinstance(result, dict) and "error" in result:
@@ -416,12 +447,15 @@ def create_langgraph_agent(llm_with_tools, tools):
                     msg = AIMessage(
                         content=f"✅ **Successfully ingested {len(ingested)} items:**\n\n{items_list}\n\n"
                                 f"📊 **Total items in RAG:** {total_ingested}\n"
-                                f"📊 **Remaining to ingest:** {remaining}"
+                                f"📊 **Remaining to ingest:** {remaining}\n\n"
+                                f"Ingestion complete. You can now search this content using the RAG tool."
                     )
                 else:
                     msg = AIMessage(
                         content=f"✅ All items already ingested.\n\n📊 **Total items in RAG:** {total_ingested}"
                     )
+
+            logger.info("✅ Ingest operation completed successfully")
 
         except Exception as e:
             logger.error(f"❌ Error in ingest_node: {e}")
@@ -433,6 +467,7 @@ def create_langgraph_agent(llm_with_tools, tools):
             "messages": state["messages"] + [msg],
             "tools": state.get("tools", {}),
             "llm": state.get("llm"),
+            "ingest_completed": True,  # Mark as completed
         }
 
     workflow = StateGraph(AgentState)
@@ -456,7 +491,7 @@ def create_langgraph_agent(llm_with_tools, tools):
     )
 
     workflow.add_edge("tools", "agent")
-    workflow.add_edge("ingest", "agent")
+    workflow.add_edge("ingest", END)
     workflow.add_edge("rag", END)
 
     app = workflow.compile()
@@ -472,7 +507,6 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
 
         if conversation_state["loop_count"] >= 5:
             logger.error("⚠️ Loop detected — stopping early after 5 iterations.")
-
             error_msg = AIMessage(
                 content=(
                     "I detected that this request was causing repeated reasoning loops. "
@@ -480,44 +514,59 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
                     "Try rephrasing your request or simplifying what you're asking for."
                 )
             )
-
             conversation_state["messages"].append(error_msg)
             conversation_state["loop_count"] = 0
             return {"messages": conversation_state["messages"]}
 
+        # Initialize with system message if needed
         if not conversation_state["messages"]:
             conversation_state["messages"].append(
                 SystemMessage(content=system_prompt)
             )
 
+        # Add the new user message
         conversation_state["messages"].append(
             HumanMessage(content=user_message)
         )
 
+        # Trim history BEFORE invoking agent
         conversation_state["messages"] = conversation_state["messages"][-max_history:]
 
+        # Ensure system message is at the start after trimming
         if not isinstance(conversation_state["messages"][0], SystemMessage):
             conversation_state["messages"].insert(0, SystemMessage(content=system_prompt))
 
-        logger.info(f"🧠 Calling LLM with {len(conversation_state['messages'])} messages")
+        logger.info(f"🧠 Starting agent with {len(conversation_state['messages'])} messages")
 
         tool_registry = {tool.name: tool for tool in tools}
 
+        # Invoke the agent
         result = await agent.ainvoke({
             "messages": conversation_state["messages"],
             "tools": tool_registry,
-            "llm": llm
+            "llm": llm,
+            "ingest_completed": False
         })
 
-        conversation_state["messages"] = result["messages"]
+        new_messages = result["messages"][len(conversation_state["messages"]):]
+        logger.info(f"📨 Agent added {len(new_messages)} new messages")
+        conversation_state["messages"].extend(new_messages)
+
+        # Reset loop count
         conversation_state["loop_count"] = 0
+
+        # Debug: Log final state
+        logger.info(f"📨 Final conversation has {len(conversation_state['messages'])} messages")
+        for i, msg in enumerate(conversation_state['messages'][-5:]):  # Only log last 5
+            msg_type = type(msg).__name__
+            content_preview = msg.content[:100] if hasattr(msg, 'content') else str(msg)[:100]
+            logger.info(f"  [-{5 - i}] {msg_type}: {content_preview}")
 
         return {"messages": conversation_state["messages"]}
 
     except Exception as e:
         if "GraphRecursionError" in str(e):
             logger.error("❌ Recursion limit reached — stopping agent loop safely.")
-
             error_msg = AIMessage(
                 content=(
                     "I ran into a recursion limit while processing your request. "
@@ -525,17 +574,13 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
                     "Try rephrasing your request or simplifying what you're asking for."
                 )
             )
-
             conversation_state["messages"].append(error_msg)
             return {"messages": conversation_state["messages"]}
 
         logger.exception("❌ Unexpected error in agent execution")
-
         error_text = getattr(e, "args", [str(e)])[0]
-
         error_msg = AIMessage(
             content=f"An error occurred while running the agent:\n\n{error_text}"
         )
-
         conversation_state["messages"].append(error_msg)
         return {"messages": conversation_state["messages"]}
