@@ -64,7 +64,7 @@ def ingest_next_batch(limit: int = 5) -> Dict[str, Any]:
                 remaining += 1
                 continue
 
-            logger.info(f"📀 Ingesting: {item['title']}")
+            logger.info(f"📀 Ingesting {count+1} of {limit}: {item['title']}")
 
             # 1. Add metadata to RAG
             meta_text = extract_metadata(item)
