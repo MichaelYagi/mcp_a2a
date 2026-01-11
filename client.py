@@ -207,7 +207,7 @@ async def main():
     print()
     print("=" * 60)
     print("\nBoth interfaces share the same conversation state!")
-    print("Commands:")
+    print("\nCLI Commands:")
     cli.list_commands()
     print()
 
