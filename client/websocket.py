@@ -10,6 +10,8 @@ import websockets
 
 from langchain_core.messages import HumanMessage
 
+from client.commands import handle_command
+
 # Import system monitor conditionally
 try:
     from tools.system_monitor import system_monitor_loop
@@ -31,7 +33,7 @@ async def broadcast_message(message_type, data):
         )
 
 
-async def websocket_handler(websocket, agent_ref, tools, logger, conversation_state, run_agent_fn, models_module):
+async def websocket_handler(websocket, agent_ref, tools, logger, conversation_state, run_agent_fn, models_module, model_name, system_prompt):
     """Handle WebSocket connections for chat"""
     CONNECTED_WEBSOCKETS.add(websocket)
 
@@ -138,6 +140,23 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
             if data.get("type") == "user" or "text" in data:
                 prompt = data.get("text")
 
+                # Handle commands
+                if prompt.startswith(":"):
+                    handled, response, new_agent, new_model = await handle_command(
+                        prompt, tools, model_name, conversation_state, models_module,
+                        system_prompt, agent_ref=agent_ref,
+                        create_agent_fn=lambda llm, t: agent_ref[0].__class__(llm, t), logger=logger
+                    )
+
+                    if handled:
+                        if response:
+                            await broadcast_message("assistant_message", {"text": response})
+                        if new_agent:
+                            agent_ref[0] = new_agent
+                        if new_model:
+                            model_name = new_model
+                        continue
+
                 print(f"\n> {prompt}")
 
                 await broadcast_message("user_message", {"text": prompt})
@@ -156,13 +175,12 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
         SYSTEM_MONITOR_CLIENTS.discard(websocket)
 
 
-async def start_websocket_server(agent, tools, logger, conversation_state, run_agent_fn, models_module, host="0.0.0.0",
-                                 port=8765):
+async def start_websocket_server(agent, tools, logger, conversation_state, run_agent_fn, models_module, model_name, system_prompt, host="0.0.0.0", port=8765):
     """Start the WebSocket server for chat"""
 
     async def handler(websocket):
         try:
-            await websocket_handler(websocket, [agent], tools, logger, conversation_state, run_agent_fn, models_module)
+            await websocket_handler(websocket, [agent], tools, logger, conversation_state, run_agent_fn, models_module, model_name, system_prompt)
         except websockets.exceptions.ConnectionClosed:
             pass
 

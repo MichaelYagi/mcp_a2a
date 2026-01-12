@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage
 from mcp_use.client.client import MCPClient
 from mcp_use.agents.mcpagent import MCPAgent
 
@@ -203,6 +204,8 @@ async def main():
         GLOBAL_CONVERSATION_STATE,
         run_agent_wrapper,
         models,
+        model_name,
+        SYSTEM_PROMPT,
         host="0.0.0.0",
         port=8765
     )
@@ -265,6 +268,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    from langchain_core.messages import HumanMessage
-
     asyncio.run(main())

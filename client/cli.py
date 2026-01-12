@@ -8,20 +8,14 @@ import asyncio
 import threading
 from queue import Queue
 
-from langchain_core.messages import SystemMessage
-
 from client.websocket import broadcast_message
+from client.commands import handle_command, get_commands_list
 
 
 def list_commands():
     """Print available CLI commands"""
-    print(":commands - List all available commands")
-    print(":tools - List all available tools")
-    print(":tool <tool> - Get the tool description")
-    print(":model - View the current active model")
-    print(":model <model> - Use the model passed")
-    print(":models - List available models")
-    print(":clear history - Clear the chat history")
+    for line in get_commands_list():
+        print(line)
 
 
 def input_thread(input_queue, stop_event):
@@ -42,21 +36,6 @@ async def cli_input_loop(agent, logger, tools, model_name, conversation_state, r
     thread = threading.Thread(target=input_thread, args=(input_queue, stop_event), daemon=True)
     thread.start()
 
-    def tool_description(tools_obj, tool_name):
-        found = False
-        for t in tools_obj:
-            if t.name == tool_name:
-                logger.info(f"  - {t.description}")
-                found = True
-                break
-        if not found:
-            logger.info(f"❌ MCP tool {tool_name} not found")
-
-    def list_tools(tools_obj):
-        logger.info(f"🛠 Found {len(tools_obj)} MCP tools:")
-        for t in tools_obj:
-            logger.info(f"  - {t.name}")
-
     try:
         while True:
             await asyncio.sleep(0.1)
@@ -67,64 +46,20 @@ async def cli_input_loop(agent, logger, tools, model_name, conversation_state, r
                 if not query:
                     continue
 
-                if query == ":commands":
-                    list_commands()
-                    continue
+                # Handle commands
+                if query.startswith(":"):
+                    handled, response, new_agent, new_model = await handle_command(
+                        query, tools, model_name, conversation_state, models_module,
+                        system_prompt, agent_ref=[agent], create_agent_fn=create_agent_fn, logger=logger
+                    )
 
-                if query == ":tools":
-                    list_tools(tools)
-                    continue
-
-                if query.startswith(":tool "):
-                    parts = query.split(maxsplit=1)
-                    if len(parts) == 1:
-                        print("Usage: :tool <tool_name>")
-                        continue
-
-                    tool_name = parts[1]
-                    tool_description(tools, tool_name)
-                    continue
-
-                if query == ":models":
-                    models_module.list_models_formatted()
-                    continue
-
-                if query.startswith(":model "):
-                    parts = query.split(maxsplit=1)
-                    if len(parts) == 1:
-                        print("Usage: :model <model_name>")
-                        continue
-
-                    new_model_name = parts[1]
-                    new_agent = await models_module.switch_model(new_model_name, tools, logger, create_agent_fn)
-                    if new_agent is None:
-                        continue
-
-                    agent = new_agent
-                    model_name = new_model_name
-                    print(f"🤖 Model switched to {model_name}\n")
-                    continue
-
-                if query == ":model":
-                    print(f"Using model: {model_name}\n")
-                    continue
-
-                if query.startswith(":clear "):
-                    parts = query.split()
-                    if len(parts) == 1:
-                        print(f"Specify what to clear")
-                        continue
-
-                    target = parts[1]
-
-                    if target == "history":
-                        conversation_state["messages"] = []
-                        conversation_state["messages"].append(SystemMessage(content=system_prompt))
-                        print(f"Chat history cleared.")
-                        continue
-
-                    else:
-                        print(f"Unknown clear target: {target}")
+                    if handled:
+                        if response:
+                            print(response)
+                        if new_agent:
+                            agent = new_agent
+                        if new_model:
+                            model_name = new_model
                         continue
 
                 logger.info(f"💬 Received query: '{query}'")
