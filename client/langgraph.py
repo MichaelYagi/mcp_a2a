@@ -1,16 +1,41 @@
 """
-LangGraph Module
-Handles LangGraph agent creation, routing, and execution
+LangGraph Module with Metrics Tracking
+Handles LangGraph agent creation, routing, and execution with performance metrics
 """
 
 import json
 import logging
 import operator
+import time
 from typing import TypedDict, Annotated, Sequence, Optional
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+
+# Try to import metrics, but don't fail if not available
+try:
+    from metrics import metrics
+    METRICS_AVAILABLE = True
+except ImportError:
+    try:
+        from client.metrics import metrics
+        METRICS_AVAILABLE = True
+    except ImportError:
+        METRICS_AVAILABLE = False
+        # Create dummy metrics if not available
+        from collections import defaultdict
+        metrics = {
+            "agent_runs": 0,
+            "agent_errors": 0,
+            "agent_times": [],
+            "llm_calls": 0,
+            "llm_errors": 0,
+            "llm_times": [],
+            "tool_calls": defaultdict(int),
+            "tool_errors": defaultdict(int),
+            "tool_times": defaultdict(list),
+        }
 
 
 class AgentState(TypedDict):
@@ -81,6 +106,7 @@ def router(state):
     logger.info(f"🎯 Router: Continuing to END (normal completion)")
     return "continue"
 
+
 async def rag_node(state):
     """Search RAG and provide context to answer the question"""
     logger = logging.getLogger("mcp_client")
@@ -100,7 +126,6 @@ async def rag_node(state):
     original_query = user_message.content
 
     # Extract the actual search terms from the query
-    # Remove common RAG-related phrases to get the real question
     search_query = original_query.lower()
     for phrase in ["using the rag tool", "use the rag tool", "using rag", "use rag", "with rag",
                    "search rag for", "query rag for", "rag search for", "and my plex library",
@@ -117,7 +142,6 @@ async def rag_node(state):
     tools_dict = state.get("tools", {})
     rag_search_tool = None
 
-    # Debug: Log available tools
     available_tools = []
     for tool in tools_dict.values() if isinstance(tools_dict, dict) else tools_dict:
         if hasattr(tool, 'name'):
@@ -136,14 +160,22 @@ async def rag_node(state):
 
     try:
         logger.info(f"🔍 Calling rag_search_tool with query: {search_query}")
+
+        # Track tool call timing
+        tool_start = time.time()
         result = await rag_search_tool.ainvoke({"query": search_query})
+        tool_duration = time.time() - tool_start
+
+        if METRICS_AVAILABLE:
+            metrics["tool_calls"]["rag_search_tool"] += 1
+            metrics["tool_times"]["rag_search_tool"].append(tool_duration)
+            logger.info(f"📊 Tracked rag_search_tool: {tool_duration:.2f}s")
 
         logger.info(f"🔍 RAG tool result type: {type(result)}")
         logger.info(f"🔍 RAG tool result (first 200 chars): {str(result)[:200]}")
 
-        # Handle different result types - check for actual objects first
+        # Handle different result types
         if isinstance(result, list) and len(result) > 0:
-            # Check if it's a list of TextContent objects
             if hasattr(result[0], 'text'):
                 logger.info("🔍 Detected actual TextContent object list")
                 result_text = result[0].text
@@ -156,16 +188,10 @@ async def rag_node(state):
                     msg = AIMessage(content=f"Error parsing RAG results: {str(e)}")
                     return {"messages": state["messages"] + [msg], "llm": state.get("llm")}
         elif isinstance(result, str):
-            # Check if it's a string representation of TextContent
             if result.startswith("[TextContent("):
                 logger.info("🔍 Detected TextContent string representation")
 
-                # The actual JSON starts after text=' and before ', annotations
-                # But we need to be very careful about finding the right boundaries
-                # Look for the pattern: text='<JSON_HERE>', annotations
-
                 try:
-                    # Find where the JSON actually starts
                     json_start_marker = "text='"
                     json_start_idx = result.find(json_start_marker)
 
@@ -173,11 +199,6 @@ async def rag_node(state):
                         raise ValueError("Could not find text=' marker")
 
                     json_start_idx += len(json_start_marker)
-
-                    # Now we need to find where it ends
-                    # The JSON ends with }' followed by , annotations
-                    # Look for }'<anything>, annotations
-                    # Use a more robust approach: count braces
 
                     brace_count = 0
                     in_string = False
@@ -212,15 +233,11 @@ async def rag_node(state):
 
                     json_str = result[json_start_idx:json_end_idx]
 
-                    # The JSON string is escaped as a Python string literal
-                    # Use codecs to decode the escape sequences properly
                     import codecs
                     try:
-                        # Decode Python string escapes: \n, \t, \', \", \\, etc.
                         json_str = codecs.decode(json_str, 'unicode_escape')
                     except Exception as decode_err:
                         logger.warning(f"⚠️ Codecs decode failed: {decode_err}, trying manual decode")
-                        # Fallback to manual replacement if codecs fails
                         json_str = json_str.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
                         json_str = json_str.replace('\\\\', '\\').replace('\\"', '"')
 
@@ -235,7 +252,6 @@ async def rag_node(state):
                     msg = AIMessage(content=f"Error parsing RAG results: {str(e)}")
                     return {"messages": state["messages"] + [msg], "llm": state.get("llm")}
             else:
-                # Regular JSON string
                 try:
                     result = json.loads(result)
                 except json.JSONDecodeError as e:
@@ -250,7 +266,6 @@ async def rag_node(state):
             chunks = [item.get("text", "") for item in results_list if isinstance(item, dict)]
             logger.info(f"✅ Extracted {len(chunks)} chunks from RAG results")
 
-            # Log a preview of the chunks
             for i, chunk in enumerate(chunks[:3]):
                 logger.info(f"📄 Chunk {i+1} preview: {chunk[:150]}...")
 
@@ -272,32 +287,31 @@ async def rag_node(state):
             logger.info(f"... (truncated, total: {len(context)} chars)")
         logger.info("=" * 80)
 
-        # Create a completely fresh conversation with ONLY the context
-        # Don't include the tool-calling system message
+        # Create fresh conversation with ONLY the context
         augmented_messages = [
             SystemMessage(content=f"""You are answering a question about movies in a user's Plex library.
 
-    The library has already been searched. Here are the ACTUAL RESULTS:
+The library has already been searched. Here are the ACTUAL RESULTS:
 
-    {context}
+{context}
 
-    Your job: Answer the question using ONLY the movies listed above.
+Your job: Answer the question using ONLY the movies listed above.
 
-    CORRECT response format:
-    "Based on your Plex library, here are movies that match:
+CORRECT response format:
+"Based on your Plex library, here are movies that match:
 
-    1. [Title from results above] ([Year]) - [Brief description from results]
-    2. [Title from results above] ([Year]) - [Brief description from results]
+1. [Title from results above] ([Year]) - [Brief description from results]
+2. [Title from results above] ([Year]) - [Brief description from results]
 
-    etc."
+etc."
 
-    WRONG responses:
-    - Suggesting to use tools (the search already happened!)
-    - Mentioning movies not in the results above
-    - Saying "let's search" or "we can use"
+WRONG responses:
+- Suggesting to use tools (the search already happened!)
+- Mentioning movies not in the results above
+- Saying "let's search" or "we can use"
 
-    The movies shown above ARE the search results. Just present them."""),
-            user_message  # The original question
+The movies shown above ARE the search results. Just present them."""),
+            user_message
         ]
 
         llm = state.get("llm")
@@ -310,14 +324,24 @@ async def rag_node(state):
             logger.info("📝 Created new LLM instance for RAG")
 
         logger.info("🧠 Calling LLM with RAG context")
+
+        # Track LLM call for RAG
+        llm_start = time.time()
         response = await llm.ainvoke(augmented_messages)
+        llm_duration = time.time() - llm_start
+
+        if METRICS_AVAILABLE:
+            metrics["llm_calls"] += 1
+            metrics["llm_times"].append(llm_duration)
+
         logger.info(f"✅ RAG response generated: {response.content[:100]}...")
 
         return {"messages": state["messages"] + [response], "llm": state.get("llm")}
 
     except Exception as e:
-        logger = logging.getLogger("mcp_client")
         logger.error(f"❌ Error in RAG node: {e}")
+        if METRICS_AVAILABLE:
+            metrics["tool_errors"]["rag_search_tool"] += 1
         msg = AIMessage(content=f"Error searching knowledge base: {str(e)}")
         return {"messages": state["messages"] + [msg], "llm": state.get("llm")}
 
@@ -330,78 +354,92 @@ def create_langgraph_agent(llm_with_tools, tools):
         messages = state["messages"]
         logger.info(f"🧠 Calling LLM with {len(messages)} messages")
 
-        response = await llm_with_tools.ainvoke(messages)
+        start_time = time.time()
+        try:
+            response = await llm_with_tools.ainvoke(messages)
+            duration = time.time() - start_time
 
-        tool_calls = getattr(response, "tool_calls", [])
-        logger.info(f"🔧 LLM returned {len(tool_calls)} tool calls")
+            # Track LLM metrics
+            if METRICS_AVAILABLE:
+                metrics["llm_calls"] += 1
+                metrics["llm_times"].append(duration)
 
-        if len(tool_calls) == 0 and response.content:
-            import re
-            import json as json_module
+            tool_calls = getattr(response, "tool_calls", [])
+            logger.info(f"🔧 LLM returned {len(tool_calls)} tool calls")
 
-            content = response.content.strip()
+            if len(tool_calls) == 0 and response.content:
+                import re
+                import json as json_module
 
-            try:
-                parsed = json_module.loads(content)
-                if isinstance(parsed, dict) and parsed.get("name"):
-                    tool_name = parsed["name"]
-                    args = parsed.get("arguments", {})
-                    if isinstance(args, str):
-                        try:
-                            args = json_module.loads(args)
-                        except:
-                            args = {}
+                content = response.content.strip()
 
-                    logger.info(f"🔧 Parsed JSON tool call: {tool_name}({args})")
-                    response.tool_calls = [{
-                        "name": tool_name,
-                        "args": args,
-                        "id": "manual_call_1",
-                        "type": "tool_call"
-                    }]
-            except (json_module.JSONDecodeError, ValueError):
-                match = re.search(r'(\w+)\((.*?)\)', content.replace('\n', '').replace('`', ''))
-                if match:
-                    tool_name = match.group(1)
-                    args_str = match.group(2).strip()
-
-                    args = {}
-                    if args_str:
-                        for arg_match in re.finditer(r'(\w+)\s*=\s*(["\']?)([^,\)]+)\2', args_str):
-                            key = arg_match.group(1)
-                            value = arg_match.group(3).strip().strip('"\'')
+                try:
+                    parsed = json_module.loads(content)
+                    if isinstance(parsed, dict) and parsed.get("name"):
+                        tool_name = parsed["name"]
+                        args = parsed.get("arguments", {})
+                        if isinstance(args, str):
                             try:
-                                value = int(value)
+                                args = json_module.loads(args)
                             except:
-                                pass
-                            args[key] = value
+                                args = {}
 
-                    logger.info(f"🔧 Parsed function call: {tool_name}({args})")
-                    response.tool_calls = [{
-                        "name": tool_name,
-                        "args": args,
-                        "id": "manual_call_1",
-                        "type": "tool_call"
-                    }]
+                        logger.info(f"🔧 Parsed JSON tool call: {tool_name}({args})")
+                        response.tool_calls = [{
+                            "name": tool_name,
+                            "args": args,
+                            "id": "manual_call_1",
+                            "type": "tool_call"
+                        }]
+                except (json_module.JSONDecodeError, ValueError):
+                    match = re.search(r'(\w+)\((.*?)\)', content.replace('\n', '').replace('`', ''))
+                    if match:
+                        tool_name = match.group(1)
+                        args_str = match.group(2).strip()
 
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            for tc in response.tool_calls:
-                logger.info(f"🔧   Tool: {tc.get('name', 'unknown')}, Args: {tc.get('args', {})}")
-        else:
-            # Log the FULL response content
-            content = response.content if hasattr(response, 'content') else str(response)
-            logger.info(f"🔧 No tool calls. Full response: {content}")  # Changed from [:200]
+                        args = {}
+                        if args_str:
+                            for arg_match in re.finditer(r'(\w+)\s*=\s*(["\']?)([^,\)]+)\2', args_str):
+                                key = arg_match.group(1)
+                                value = arg_match.group(3).strip().strip('"\'')
+                                try:
+                                    value = int(value)
+                                except:
+                                    pass
+                                args[key] = value
 
-        if hasattr(response, 'content'):
-            if not response.content or not response.content.strip():
-                logger.info("⚠️ LLM returned empty content (may have tool_calls)")
+                        logger.info(f"🔧 Parsed function call: {tool_name}({args})")
+                        response.tool_calls = [{
+                            "name": tool_name,
+                            "args": args,
+                            "id": "manual_call_1",
+                            "type": "tool_call"
+                        }]
 
-        return {
-            "messages": messages + [response],
-            "tools": state.get("tools", {}),
-            "llm": state.get("llm"),
-            "ingest_completed": state.get("ingest_completed", False),
-        }
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                for tc in response.tool_calls:
+                    logger.info(f"🔧   Tool: {tc.get('name', 'unknown')}, Args: {tc.get('args', {})}")
+            else:
+                content = response.content if hasattr(response, 'content') else str(response)
+                logger.info(f"🔧 No tool calls. Full response: {content}")
+
+            if hasattr(response, 'content'):
+                if not response.content or not response.content.strip():
+                    logger.info("⚠️ LLM returned empty content (may have tool_calls)")
+
+            return {
+                "messages": messages + [response],
+                "tools": state.get("tools", {}),
+                "llm": state.get("llm"),
+                "ingest_completed": state.get("ingest_completed", False),
+            }
+        except Exception as e:
+            duration = time.time() - start_time
+            if METRICS_AVAILABLE:
+                metrics["llm_errors"] += 1
+                metrics["llm_times"].append(duration)
+            logger.error(f"❌ Model call failed after {duration:.2f}s: {e}")
+            raise
 
     async def ingest_node(state: AgentState):
         tools_dict = state.get("tools", {})
@@ -423,10 +461,9 @@ def create_langgraph_agent(llm_with_tools, tools):
 
         try:
             logger.info("📥 Starting ingest operation...")
-            limit = 5  # default
+            limit = 5
             messages = state["messages"]
 
-            # Find the most recent AIMessage with tool_calls
             for msg in reversed(messages):
                 if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
                     for tool_call in msg.tool_calls:
@@ -453,16 +490,12 @@ def create_langgraph_agent(llm_with_tools, tools):
                 logger.info("🔍 Detected TextContent string, extracting...")
                 import re
 
-                # More robust extraction that handles escaped quotes
-                # Look for text=' and then find the matching ', taking into account escaping
                 start_marker = "text='"
                 start_idx = result.find(start_marker)
 
                 if start_idx != -1:
                     start_idx += len(start_marker)
 
-                    # Now find the closing quote, accounting for escape sequences
-                    # We need to find ', annotations= or ', type=
                     end_markers = ["', annotations=", "', type="]
                     end_idx = -1
 
@@ -475,7 +508,6 @@ def create_langgraph_agent(llm_with_tools, tools):
                     if end_idx != -1:
                         json_str = result[start_idx:end_idx]
 
-                        # Decode escape sequences
                         import codecs
                         try:
                             json_str = codecs.decode(json_str, 'unicode_escape')
@@ -486,38 +518,15 @@ def create_langgraph_agent(llm_with_tools, tools):
 
                         result = json_str
                         logger.info(f"🔍 Extracted text, length: {len(result)}")
-                    else:
-                        logger.error(f"❌ Could not find end marker in TextContent")
-                        logger.error(f"❌ First 500 chars: {result[:500]}")
-                else:
-                    logger.error(f"❌ Could not find start marker in TextContent")
-                    logger.error(f"❌ First 500 chars: {result[:500]}")
 
             if isinstance(result, str):
-                # Check if it's a TextContent string
-                if result.startswith('[TextContent('):
-                    logger.info("🔍 Detected TextContent string, extracting...")
-                    import re
-                    match = re.search(r"text='([^']*(?:\\'[^']*)*)'", result)
-                    if match:
-                        result = match.group(1).replace("\\'", "'").replace("\\n", "\n")
-                        logger.info(f"🔍 Extracted text, length: {len(result)}")
-                    else:
-                        logger.error(f"❌ Could not extract text from TextContent")
-                        logger.error(f"❌ First 500 chars: {result[:500]}")
-
-                # Now try to parse as JSON
                 try:
                     result = json.loads(result)
                     logger.info(f"✅ Successfully parsed JSON result")
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ JSON decode error: {e}")
-                    logger.error(f"❌ Result type: {type(result)}")
-                    logger.error(f"❌ Result length: {len(result) if isinstance(result, str) else 'N/A'}")
-                    logger.error(f"❌ First 1000 chars of result: {str(result)[:1000]}")
-
                     msg = AIMessage(
-                        content=f"Error: Could not parse ingestion result (length: {len(result)} chars). Check logs for details.")
+                        content=f"Error: Could not parse ingestion result. Check logs for details.")
                     return {
                         "messages": state["messages"] + [msg],
                         "tools": state.get("tools", {}),
@@ -558,7 +567,7 @@ def create_langgraph_agent(llm_with_tools, tools):
             "messages": state["messages"] + [msg],
             "tools": state.get("tools", {}),
             "llm": state.get("llm"),
-            "ingest_completed": True,  # Mark as completed
+            "ingest_completed": True,
         }
 
     workflow = StateGraph(AgentState)
@@ -577,7 +586,7 @@ def create_langgraph_agent(llm_with_tools, tools):
             "tools": "tools",
             "rag": "rag",
             "ingest": "ingest",
-            "continue": END  # Changed from "agent": END to avoid confusion
+            "continue": END
         }
     )
 
@@ -592,12 +601,23 @@ def create_langgraph_agent(llm_with_tools, tools):
 
 
 async def run_agent(agent, conversation_state, user_message, logger, tools, system_prompt, llm=None, max_history=20):
-    """Execute the agent with the given user message"""
+    """Execute the agent with the given user message and track metrics"""
+
+    start_time = time.time()
+
     try:
+        if METRICS_AVAILABLE:
+            metrics["agent_runs"] += 1
+
         conversation_state["loop_count"] += 1
 
         if conversation_state["loop_count"] >= 5:
             logger.error("⚠️ Loop detected — stopping early after 5 iterations.")
+            if METRICS_AVAILABLE:
+                metrics["agent_errors"] += 1
+                duration = time.time() - start_time
+                metrics["agent_times"].append(duration)
+
             error_msg = AIMessage(
                 content=(
                     "I detected that this request was causing repeated reasoning loops. "
@@ -643,12 +663,34 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
         logger.info(f"📨 Agent added {len(new_messages)} new messages")
         conversation_state["messages"].extend(new_messages)
 
+        # Track tool calls from AIMessages with tool_calls
+        if METRICS_AVAILABLE:
+            from langchain_core.messages import ToolMessage
+            tool_calls_seen = set()
+
+            for msg in new_messages:
+                # Track from ToolMessage to avoid double counting
+                if isinstance(msg, ToolMessage):
+                    tool_name = getattr(msg, 'name', None)
+                    tool_id = getattr(msg, 'tool_call_id', None)
+
+                    if tool_name and tool_id and tool_id not in tool_calls_seen:
+                        tool_calls_seen.add(tool_id)
+                        metrics["tool_calls"][tool_name] += 1
+                        logger.info(f"📊 Tracked tool: {tool_name}")
+
         # Reset loop count
         conversation_state["loop_count"] = 0
 
+        # Track successful agent run
+        if METRICS_AVAILABLE:
+            duration = time.time() - start_time
+            metrics["agent_times"].append(duration)
+            logger.info(f"✅ Agent run completed in {duration:.2f}s")
+
         # Debug: Log final state
         logger.info(f"📨 Final conversation has {len(conversation_state['messages'])} messages")
-        for i, msg in enumerate(conversation_state['messages'][-5:]):  # Only log last 5
+        for i, msg in enumerate(conversation_state['messages'][-5:]):
             msg_type = type(msg).__name__
             content_preview = msg.content[:100] if hasattr(msg, 'content') else str(msg)[:100]
             logger.info(f"  [-{5 - i}] {msg_type}: {content_preview}")
@@ -656,6 +698,11 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
         return {"messages": conversation_state["messages"]}
 
     except Exception as e:
+        if METRICS_AVAILABLE:
+            metrics["agent_errors"] += 1
+            duration = time.time() - start_time
+            metrics["agent_times"].append(duration)
+
         if "GraphRecursionError" in str(e):
             logger.error("❌ Recursion limit reached — stopping agent loop safely.")
             error_msg = AIMessage(
@@ -668,7 +715,7 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
             conversation_state["messages"].append(error_msg)
             return {"messages": conversation_state["messages"]}
 
-        logger.exception("❌ Unexpected error in agent execution")
+        logger.exception(f"❌ Unexpected error in agent execution")
         error_text = getattr(e, "args", [str(e)])[0]
         error_msg = AIMessage(
             content=f"An error occurred while running the agent:\n\n{error_text}"
