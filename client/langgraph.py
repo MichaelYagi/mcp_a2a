@@ -350,9 +350,47 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
     """
     Filter tools based on user intent to reduce confusion.
     Only show the LLM the tools relevant to the current request.
+
+    Returns empty list if user wants LLM-only response (no tools).
     """
     user_message_lower = user_message.lower()
     logger = logging.getLogger("mcp_client")
+
+    # LLM-ONLY DETECTION (HIGHEST PRIORITY)
+    # Check if user explicitly wants LLM-only response without tools
+    llm_only_keywords = [
+        # Explicit LLM/AI requests
+        "using llm", "use llm", "llm only", "just llm", "only llm",
+        "using ai", "use ai", "ai only", "just ai", "only ai",
+        "using claude", "use claude", "claude only", "just claude",
+        "think like an ai", "think like a human", "use your knowledge",
+        "from your training", "what do you know", "in your opinion",
+
+        # Tool restrictions
+        "don't use tools", "no tools", "without tools", "skip tools",
+        "don't call tools", "without calling tools", "no tool calls",
+        "don't use any tools", "do not use tools",
+
+        # Specific tool restrictions
+        "don't search", "no search", "without searching", "skip search",
+        "don't call rag", "no rag", "without rag", "skip rag",
+        "don't use plex", "no plex", "without plex", "skip plex",
+        "don't check", "no checking", "without checking",
+        "don't look up", "no looking up", "without looking up",
+
+        # General knowledge requests
+        "just tell me", "just explain", "just answer", "simply tell me",
+        "off the top of your head", "from memory", "what you know already",
+        "based on your knowledge", "using your knowledge",
+
+        # Conversational/opinion requests
+        "what's your take", "what's your opinion", "your thoughts on",
+        "how would you", "what would you", "in your view", "from your perspective"
+    ]
+
+    if any(keyword in user_message_lower for keyword in llm_only_keywords):
+        logger.info("🧠 Detected LLM-ONLY intent - NO TOOLS will be provided")
+        return []  # Empty list = no tools = LLM-only response
 
     # Todo/task keywords - COMPREHENSIVE LIST
     todo_keywords = [
@@ -469,17 +507,38 @@ def create_langgraph_agent(llm_with_tools, tools):
                 break
 
         # Filter tools based on user intent
+        llm_to_use = llm_with_tools
+        is_llm_only_mode = False
+
         if user_message:
             # Get all available tools from state
             all_tools = list(state.get("tools", {}).values())
             filtered_tools = filter_tools_by_intent(user_message, all_tools)
-            tool_names = [t.name for t in filtered_tools]
-            logger.info(f"🎯 Filtered to {len(filtered_tools)} relevant tools: {tool_names}")
 
-            # Bind the filtered tools to the BASE LLM
-            llm_to_use = base_llm.bind_tools(filtered_tools)
+            # Check if LLM-only mode (empty tool list)
+            if len(filtered_tools) == 0:
+                logger.info(f"🧠 LLM-ONLY MODE: Using base LLM without any tools")
+                llm_to_use = base_llm
+                is_llm_only_mode = True
+
+                # CRITICAL: Add a system message to prevent tool mentions
+                # Remove any existing system messages and add LLM-only instruction
+                filtered_messages = [m for m in messages if not isinstance(m, SystemMessage)]
+                llm_only_system = SystemMessage(content="""You are a helpful AI assistant. 
+
+    IMPORTANT: You do NOT have access to any tools, functions, or external data sources. 
+    Do NOT mention calling tools, searching, or looking things up.
+    Answer questions directly using ONLY your training knowledge.
+    If you don't know something, simply say you don't know.
+
+    Be concise and helpful.""")
+                messages = [llm_only_system] + filtered_messages
+
+            else:
+                tool_names = [t.name for t in filtered_tools]
+                logger.info(f"🎯 Filtered to {len(filtered_tools)} relevant tools: {tool_names}")
+                llm_to_use = base_llm.bind_tools(filtered_tools)
         else:
-            # No user message, use all tools
             llm_to_use = llm_with_tools
 
         logger.info(f"🧠 Calling LLM with {len(messages)} messages")
@@ -497,7 +556,8 @@ def create_langgraph_agent(llm_with_tools, tools):
             tool_calls = getattr(response, "tool_calls", [])
             logger.info(f"🔧 LLM returned {len(tool_calls)} tool calls")
 
-            if len(tool_calls) == 0 and response.content:
+            # CRITICAL: Only parse text for tool calls if NOT in LLM-only mode
+            if not is_llm_only_mode and len(tool_calls) == 0 and response.content:
                 import re
                 import json as json_module
 
@@ -568,8 +628,14 @@ def create_langgraph_agent(llm_with_tools, tools):
             if METRICS_AVAILABLE:
                 metrics["llm_errors"] += 1
                 metrics["llm_times"].append(duration)
-            logger.error(f"❌ Model call failed after {duration:.2f}s: {e}")
-            raise
+
+            logger.error(f"❌ Error in call_model: {str(e)}")
+            return {
+                "messages": messages + [AIMessage(content=f"Error: {str(e)}")],
+                "tools": state.get("tools", {}),
+                "llm": state.get("llm"),
+                "ingest_completed": state.get("ingest_completed", False),
+            }
 
     async def ingest_node(state: AgentState):
         tools_dict = state.get("tools", {})
