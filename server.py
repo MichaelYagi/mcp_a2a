@@ -111,7 +111,7 @@ from tools.plex.ingest import ingest_next_batch
 mcp = FastMCP("MCP server")
 
 # ─────────────────────────────────────────────
-# To-do Tools
+# Knowledge Base Tools
 # ─────────────────────────────────────────────
 
 @mcp.tool()

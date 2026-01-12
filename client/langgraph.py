@@ -9,7 +9,7 @@ import operator
 import time
 from typing import TypedDict, Annotated, Sequence, Optional
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
@@ -347,20 +347,15 @@ The movies shown above ARE the search results. Just present them."""),
 
 
 def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
-    """
-    Filter tools based on user intent to reduce confusion.
-    Only show the LLM the tools relevant to the current request.
-
-    Returns empty list if user wants LLM-only response (no tools).
-    """
+    """Filter tools based on user intent"""
     user_message_lower = user_message.lower()
     logger = logging.getLogger("mcp_client")
 
-    # LLM-ONLY DETECTION (HIGHEST PRIORITY)
+    # LLM-ONLY DETECTION
     # Check if user explicitly wants LLM-only response without tools
     llm_only_keywords = [
         # Explicit LLM/AI requests
-        "using llm", "use llm", "llm only", "just llm", "only llm",
+        "using llm", "use llm", "using the llm", "llm only", "just llm", "only llm", "only the llm",
         "using ai", "use ai", "ai only", "just ai", "only ai",
         "using claude", "use claude", "claude only", "just claude",
         "think like an ai", "think like a human", "use your knowledge",
@@ -391,6 +386,140 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
     if any(keyword in user_message_lower for keyword in llm_only_keywords):
         logger.info("🧠 Detected LLM-ONLY intent - NO TOOLS will be provided")
         return []  # Empty list = no tools = LLM-only response
+
+    # Knowledge Base / Note Adding (check BEFORE to-do)
+    kb_add_keywords = [
+        # Direct commands
+        "add to knowledge", "add to my knowledge", "add to kb", "add to my kb",
+        "save to knowledge", "save to my knowledge", "save to kb", "save to my kb",
+        "store in knowledge", "store in my knowledge", "store in kb",
+
+        # Note-taking language
+        "remember this", "save this", "make a note", "write down",
+        "note that", "keep track of", "record this", "jot down",
+        "save note", "add note", "create note", "add entry", "create entry",
+
+        # URL/content specific
+        "add this url", "save this url", "add this link", "save this link",
+        "add this page", "save this page", "add this site", "save this site",
+        "add https://", "save https://", "store https://",
+
+        # Document/text storage
+        "save this information", "store this information",
+        "add this to my notes", "save this to my notes",
+        "remember that", "don't forget that"
+    ]
+
+    if any(keyword in user_message_lower for keyword in kb_add_keywords):
+        logger.info("🎯 Detected KNOWLEDGE BASE ADD intent")
+        return [t for t in all_tools if t.name in [
+            "rag_add_tool",  # RAG ingestion
+            "add_entry",  # Direct KB add
+            "list_entries",  # To verify after adding
+            "get_entry"  # To check what was added
+        ]]
+
+    # Knowledge Base / Note Searching
+    kb_search_keywords = [
+        "search my notes", "search my knowledge", "search kb", "search my kb",
+        "what do i know about", "what did i save about", "what have i stored about",
+        "find in my notes", "find in my knowledge", "look up in notes",
+        "what did i write about", "what did i record about",
+        "search entries", "find entries", "search entry", "find entry"
+    ]
+
+    if any(keyword in user_message_lower for keyword in kb_search_keywords):
+        logger.info("🎯 Detected KNOWLEDGE BASE SEARCH intent")
+        return [t for t in all_tools if t.name in [
+            "rag_search_tool", "search_entries", "search_semantic",
+            "search_by_tag", "get_entry", "list_entries"
+        ]]
+
+    # Check for EXPLICIT tool name mentions (user debugging)
+    # If user explicitly names a tool, assume they know what they want
+    explicit_tool_mentions = [
+        "using the", "use the", "call the", "with the", "using tool",
+        "use tool", "call tool"
+    ]
+
+    if any(phrase in user_message_lower for phrase in explicit_tool_mentions):
+        # Extract the tool name they mentioned
+        for tool in all_tools:
+            if tool.name.lower() in user_message_lower:
+                logger.info(f"🎯 User explicitly requested {tool.name}")
+                return [tool]  # Return ONLY that tool
+
+    # To-do intent (check BEFORE note intent)
+    todo_keywords = [
+        # Marking complete/done
+        "mark", "complete", "finish", "done", "finished", "completed",
+        "mark as complete", "mark as done", "mark complete", "mark done",
+        "set to complete", "set to done", "set as complete", "set as done",
+        "check off", "checked off", "cross off",
+
+        # Todo/task general terms
+        "todo", "task", "to-do", "to do",
+        "todo list", "task list", "my todos", "my tasks",
+
+        # Adding
+        "add to my", "add to", "remind me", "remind me to",
+        "i need to", "don't forget", "don't forget to",
+        "create a todo", "create a task", "create todo", "create task",
+        "new todo", "new task", "add todo", "add task",
+        "make a todo", "make a task",
+
+        # Viewing/Listing
+        "show my todos", "show my tasks", "show todos", "show tasks",
+        "list my todos", "list my tasks", "list todos", "list tasks",
+        "what do i need to do", "what's on my todo", "what's in my todo",
+        "check my todos", "check my tasks", "view my todos", "view my tasks",
+        "see my todos", "see my tasks", "display todos", "display tasks",
+        "get my todos", "get my tasks",
+
+        # Status-specific
+        "incomplete todos", "incomplete tasks", "non complete todos", "non complete tasks",
+        "unfinished todos", "unfinished tasks", "open todos", "open tasks",
+        "pending todos", "pending tasks", "active todos", "active tasks",
+        "outstanding todos", "outstanding tasks",
+
+        # Searching
+        "find todos", "find tasks", "search todos", "search tasks",
+        "todos about", "tasks about", "todos for", "tasks for",
+        "todos containing", "tasks containing", "look for todo", "look for task",
+
+        # Updating/Modifying
+        "update todo", "update task", "change todo", "change task",
+        "modify todo", "modify task", "edit todo", "edit task",
+        "update my todo", "update my task", "change my todo", "change my task",
+
+        # Deleting/Removing
+        "delete todo", "delete task", "remove todo", "remove task",
+        "clear todos", "clear tasks", "clear all todos", "clear all tasks",
+        "delete all todos", "delete all tasks", "remove all todos", "remove all tasks",
+
+        # Referencing by number/position
+        "mark 1", "mark #", "mark item", "mark number",
+        "complete 1", "complete #", "complete item", "complete number",
+        "task 1", "task #", "todo 1", "todo #",
+        "first todo", "first task", "second todo", "second task",
+        "next todo", "next task",
+
+        # Action-oriented phrases
+        "mark brekkie", "complete brekkie", "finish brekkie",  # Example from your logs
+        "i did", "i finished", "i completed", "i'm done with",
+        "finished with", "done with", "completed the",
+
+        # Status checks
+        "what's left", "what remains", "what's remaining",
+        "what haven't i done", "what's not done", "what's incomplete",
+    ]
+
+    if any(keyword in user_message_lower for keyword in todo_keywords):
+        logger.info("🎯 Detected TODO intent")
+        return [t for t in all_tools if t.name in [
+            "add_todo_item", "list_todo_items", "search_todo_items",
+            "update_todo_item", "delete_todo_item", "delete_all_todo_items"
+        ]]
 
     # Todo/task keywords - COMPREHENSIVE LIST
     todo_keywords = [
@@ -505,6 +634,41 @@ def create_langgraph_agent(llm_with_tools, tools):
             if isinstance(msg, HumanMessage):
                 user_message = msg.content
                 break
+
+                # Look for recent list_todo_items calls
+            todo_context = None
+            for msg in reversed(messages[-10:]):  # Check last 10 messages
+                if isinstance(msg, ToolMessage) and hasattr(msg, 'name'):
+                    if msg.name == "list_todo_items":
+                        # Extract todo items from result
+                        try:
+                            import json
+                            content = msg.content
+                            if isinstance(content, list) and hasattr(content[0], 'text'):
+                                content = content[0].text
+
+                            todos = json.loads(content)
+                            if todos:
+                                todo_context = "\n".join([
+                                    f"- '{todo['title']}' (id: {todo['id']}, status: {todo.get('status', 'unknown')})"
+                                    for todo in todos[:5]  # Top 5
+                                ])
+                                logger.info(f"📋 Found recent todo list context")
+                                break
+                        except Exception as e:
+                            logger.warning(f"⚠️ Couldn't extract todo context: {e}")
+
+            # If we have to-do context and user is asking to update something
+            if todo_context and user_message:
+                user_lower = user_message.lower()
+                if any(word in user_lower for word in ['mark', 'complete', 'update', 'finish']):
+                    # Add context message
+                    context_msg = SystemMessage(content=f"""RECENT TODO ITEMS:
+               {todo_context}
+
+               When the user refers to a todo by name or number, use the ID shown above.""")
+                    messages = [messages[0]] + [context_msg] + messages[1:]  # Insert after system prompt
+                    logger.info("📋 Added todo context to LLM")
 
         # Filter tools based on user intent
         llm_to_use = llm_with_tools
