@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>MCP Browser Client</title>
     <style>
         * {
@@ -18,6 +18,8 @@
             height: 100vh;
             background: #f5f7fa;
             overflow: hidden;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
         }
 
         #header {
@@ -48,17 +50,27 @@
             border: 1px solid #cbd5e1;
             background: white;
             cursor: pointer;
+            height: 38px;
         }
 
-        #logToggle {
+        #logToggle, #monitorToggle, #dashboardBtn {
             padding: 0.5rem 1rem;
-            background: #3498db;
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-size: 0.9rem;
             transition: background 0.2s;
+            height: 38px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            line-height: 1;
+        }
+
+        #logToggle {
+            background: #3498db;
         }
 
         #logToggle:hover {
@@ -66,18 +78,19 @@
         }
 
         #monitorToggle {
-            padding: 0.5rem 1rem;
             background: #9b59b6;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: background 0.2s;
         }
 
         #monitorToggle:hover {
             background: #8e44ad;
+        }
+
+        #dashboardBtn {
+            background: #27ae60;
+        }
+
+        #dashboardBtn:hover {
+            background: #229954;
         }
 
         #mainContainer {
@@ -90,7 +103,7 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            padding: 2rem;
+            padding: 2rem 2rem 0 2rem;
             overflow: hidden;
         }
 
@@ -176,18 +189,21 @@
             display: flex;
             gap: 0.5rem;
             margin-top: 1rem;
+            align-items: stretch;
         }
 
         #input {
             flex: 1;
-            height: 60px;
+            height: 100px;
             font-size: 1rem;
-            padding: 0.5rem;
+            padding: 0.75rem;
             border-radius: 8px;
             border: 1px solid #cbd5e1;
             background: #ffffff;
             box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
-            resize: none;
+            resize: vertical;
+            min-height: 100px;
+            max-height: 250px;
         }
 
         #input:focus {
@@ -197,7 +213,7 @@
         }
 
         #sendBtn {
-            padding: 0.5rem 1rem;
+            padding: 0.75rem 1.5rem;
             font-size: 1rem;
             cursor: pointer;
             background: #1c7dff;
@@ -205,6 +221,10 @@
             border: none;
             border-radius: 8px;
             transition: background 0.2s ease;
+            min-height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         #sendBtn:hover {
@@ -216,7 +236,6 @@
             cursor: not-allowed;
         }
 
-        /* Touch-friendly buttons */
         @media (hover: none) and (pointer: coarse) {
             button, .log-btn, .filter-btn {
                 min-height: 44px;
@@ -231,12 +250,12 @@
         #status {
             font-style: italic;
             color: #555;
-            height: 1.2rem;
+            min-height: 1.5rem;
             margin-top: 1rem;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
         }
 
-        /* Log Panel Styles */
         #logPanel {
             width: 0;
             background: #1e1e1e;
@@ -294,6 +313,7 @@
 
         .mobile-close {
             background: #424242 !important;
+            display: none;
         }
 
         .mobile-close:hover {
@@ -441,7 +461,6 @@
             50% { opacity: 0.5; }
         }
 
-        /* System Monitor Panel */
         #systemMonitor {
             width: 0;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -564,7 +583,6 @@
             background: linear-gradient(90deg, #f44336, #d32f2f);
         }
 
-        /* Scrollbar Styles */
         ::-webkit-scrollbar {
             width: 10px;
         }
@@ -624,24 +642,6 @@
             background: rgba(255, 255, 255, 0.3);
         }
 
-        /* Add after other button styles */
-        #dashboardBtn {
-            padding: 0.5rem 1rem;
-            background: #27ae60;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: background 0.2s;
-            text-decoration: none;
-            display: inline-block;
-        }
-
-        #dashboardBtn:hover {
-            background: #229954;
-        }
-
         /* Tablet */
         @media (max-width: 1024px) {
             #logPanel.open {
@@ -655,10 +655,6 @@
 
         /* Mobile */
         @media (max-width: 768px) {
-            body {
-                overflow: hidden;
-            }
-
             #header {
                 padding: 0.75rem 1rem;
             }
@@ -671,29 +667,20 @@
                 gap: 0.5rem;
             }
 
-            #dashboardBtn {
-                padding: 0.4rem 0.7rem;
+            #dashboardBtn, #modelSelect, #logToggle, #monitorToggle {
+                padding: 0.5rem 0.8rem;
                 font-size: 0.85rem;
+                height: 38px;
+                min-height: 38px;
             }
 
             #modelSelect {
-                padding: 0.4rem;
-                font-size: 0.85rem;
-                font-size: 16px; /* Prevents iOS zoom on focus */
-            }
-
-            #logToggle {
-                padding: 0.4rem 0.7rem;
-                font-size: 0.85rem;
-            }
-
-            #monitorToggle {
-                padding: 0.4rem 0.7rem;
-                font-size: 0.85rem;
+                font-size: 16px;
             }
 
             #chatContainer {
                 padding: 1rem;
+                padding-bottom: max(1rem, calc(1rem + env(safe-area-inset-bottom) + 10px));
             }
 
             .msg {
@@ -703,17 +690,25 @@
             }
 
             #input {
-                height: 50px;
-                font-size: 16px; /* Prevents iOS zoom on focus */
+                height: 90px;
+                min-height: 90px;
+                font-size: 16px;
+                padding: 0.6rem;
             }
 
             #sendBtn {
-                padding: 0.4rem 0.8rem;
+                padding: 0.6rem 1rem;
                 font-size: 0.95rem;
+                min-height: 90px;
             }
 
-            /* Log panel takes full screen on mobile */
-            #logPanel.open {
+            #status {
+                margin-top: 0.75rem;
+                margin-bottom: 1.5rem;
+                font-size: 1rem;
+            }
+
+            #logPanel.open, #systemMonitor.open {
                 width: 100%;
                 position: fixed;
                 top: 0;
@@ -725,29 +720,24 @@
                 border-left: none;
             }
 
-            #logHeader {
+            #logHeader, .monitor-header {
                 padding: 0.75rem;
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 0.5rem;
             }
 
-            #logHeader h2 {
+            #logHeader h2, .monitor-header h2 {
                 font-size: 0.95rem;
             }
 
-            .log-controls {
-                flex-wrap: wrap;
-                width: 100%;
+            .mobile-close {
+                display: inline-block;
             }
 
-            .mobile-close {
-                display: inline-block !important;
+            #logHeader .mobile-close {
                 width: 100%;
                 margin-top: 0.5rem;
             }
 
-            .log-btn {
+            .log-btn, .monitor-btn {
                 padding: 0.3rem 0.6rem;
                 font-size: 0.75rem;
             }
@@ -771,51 +761,15 @@
                 gap: 0.4rem;
             }
 
-            .log-timestamp {
+            .log-timestamp, .log-level {
                 font-size: 0.7rem;
             }
 
             .log-level {
-                font-size: 0.7rem;
                 min-width: 50px;
             }
 
             .log-status {
-                font-size: 0.75rem;
-            }
-
-            /* System Monitor takes full screen on mobile */
-            #systemMonitor.open {
-                width: 100%;
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                height: 100%;
-                z-index: 1000;
-                border-left: none;
-            }
-
-            .monitor-header {
-                padding: 0.75rem;
-            }
-
-            .monitor-header h2 {
-                font-size: 0.95rem;
-            }
-
-            .monitor-controls {
-                flex-wrap: wrap;
-                width: 100%;
-            }
-
-            .monitor-btn.mobile-close {
-                width: 100%;
-            }
-
-            .monitor-btn {
-                padding: 0.3rem 0.6rem;
                 font-size: 0.75rem;
             }
 
@@ -840,33 +794,20 @@
             }
 
             #topBar {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 0.3rem;
+                flex-wrap: wrap;
+                gap: 0.4rem;
             }
 
             #topBar label {
                 display: none;
             }
 
-            #modelSelect {
-                width: 100%;
+            #modelSelect, #logToggle, #monitorToggle, #dashboardBtn {
+                flex: 1 1 calc(50% - 0.2rem);
+                min-width: 0;
                 font-size: 0.8rem;
-            }
-
-            #logToggle {
-                width: 100%;
-                font-size: 0.8rem;
-            }
-
-            #monitorToggle {
-                width: 100%;
-                font-size: 0.8rem;
-            }
-
-            #dashboardBtn {
-                width: 100%;
-                font-size: 0.8rem;
+                height: 36px;
+                min-height: 36px;
             }
 
             .msg {
@@ -874,10 +815,17 @@
                 font-size: 0.85rem;
             }
 
-            #logHeader {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 0.5rem;
+            #input {
+                height: 80px;
+                min-height: 80px;
+            }
+
+            #sendBtn {
+                min-height: 80px;
+            }
+
+            .log-controls, .monitor-controls {
+                width: 100%;
             }
 
             #logFilters {
@@ -885,21 +833,7 @@
                 align-items: stretch;
             }
 
-            .filter-btn {
-                width: 100%;
-            }
-
-            .log-status {
-                width: 100%;
-            }
-
-            .monitor-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 0.5rem;
-            }
-
-            .monitor-controls {
+            .filter-btn, .log-status {
                 width: 100%;
             }
         }
