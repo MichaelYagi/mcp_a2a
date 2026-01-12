@@ -1449,15 +1449,17 @@
         // Add message to UI
         // -------------------------
         function addMessage(text, role) {
-            const div = document.createElement("div");
-            div.className = `msg ${role}`;
-            div.innerHTML = formatMessage(text);
-            chat.appendChild(div);
+            if (text.trim() !== "") {
+                const div = document.createElement("div");
+                div.className = `msg ${role}`;
+                div.innerHTML = formatMessage(text);
+                chat.appendChild(div);
 
-            chatHistory.push({ role, text });
-            saveHistory(chatHistory);
+                chatHistory.push({role, text});
+                saveHistory(chatHistory);
 
-            chat.scrollTop = chat.scrollHeight;
+                chat.scrollTop = chat.scrollHeight;
+            }
         }
 
         // -------------------------
