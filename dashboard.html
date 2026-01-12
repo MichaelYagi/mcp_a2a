@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>MCP Dashboard - Performance Metrics</title>
     <style>
         * {
@@ -18,6 +18,8 @@
             height: 100vh;
             background: #f5f7fa;
             overflow: hidden;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
         }
 
         #header {
@@ -51,7 +53,11 @@
             font-size: 0.9rem;
             transition: background 0.2s;
             text-decoration: none;
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 38px;
+            line-height: 1;
         }
 
         #backBtn:hover {
@@ -62,6 +68,7 @@
             flex: 1;
             overflow-y: auto;
             padding: 2rem;
+            padding-bottom: max(3rem, calc(3rem + env(safe-area-inset-bottom)));
         }
 
         .status-bar {
@@ -239,7 +246,6 @@
             font-style: italic;
         }
 
-        /* Scrollbar Styles */
         ::-webkit-scrollbar {
             width: 10px;
         }
@@ -257,7 +263,6 @@
             background: #94a3b8;
         }
 
-        /* Mobile Responsive */
         @media (max-width: 768px) {
             #header {
                 padding: 0.75rem 1rem;
@@ -267,8 +272,16 @@
                 font-size: 1.1rem;
             }
 
+            #backBtn {
+                padding: 0.5rem 0.8rem;
+                font-size: 0.85rem;
+                height: 38px;
+                min-height: 38px;
+            }
+
             #mainContainer {
                 padding: 1rem;
+                padding-bottom: max(4rem, calc(4rem + env(safe-area-inset-bottom) + 30px));
             }
 
             .metrics-grid {
@@ -304,7 +317,9 @@
 
             #backBtn {
                 padding: 0.4rem 0.7rem;
-                font-size: 0.85rem;
+                font-size: 0.8rem;
+                height: 36px;
+                min-height: 36px;
             }
 
             .metric-value {
