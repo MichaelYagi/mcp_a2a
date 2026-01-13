@@ -1,5 +1,0 @@
-{
-  "name": "list_todos",
-  "description": "List all todos",
-  "input_schema": { "type": "object", "properties": {} }
-}

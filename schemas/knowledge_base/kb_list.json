@@ -1,8 +1,0 @@
-{
-  "name": "list_entries",
-  "description": "List all knowledge base entries.",
-  "input_schema": {
-    "type": "object",
-    "properties": {}
-  }
-}

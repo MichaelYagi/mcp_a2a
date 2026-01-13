@@ -12,7 +12,6 @@ This started as a tool for me to learn about implementing MCP and its core compo
 
 * **Bidirectional Architecture**: Server exposes tools, Client acts as the AI brain using LLMs
 * **Multi-Domain Support**: Organize tools into logical categories (`knowledge`, `system`, `math`)
-* **Schema-Driven Validation**: JSON schemas ensure correctly formatted inputs
 * **Versioned Storage**: File-backed persistence with automatic snapshotting
 * **Offline Semantic Search**: Pure-Python TF-IDF implementation
 * **RAG System**: Vector-based retrieval with OllamaEmbeddings (bge-large) for semantic search over ingested content
@@ -38,7 +37,7 @@ This started as a tool for me to learn about implementing MCP and its core compo
 ```
 mcp-server/
 │
-├── server.py                 # Registers and exposes tools and prompts (schemas)
+├── server.py                 # Registers and exposes tools and prompts
 ├── client.py                 # AI Agent, interprets requests, and decides when to call tools
 ├── index.html                # Web UI with chat and real-time log streaming
 │
@@ -48,13 +47,6 @@ mcp-server/
 │   ├── location/             # External API integration
 │   │   └── get_weather.py
 │   └── more_tools/
-│
-├── schemas/                  # JSON schemas for tool inputs - defines prompts
-│   ├── knowledge_base/       
-│   │   └── kb_add.json
-│   ├── location/             
-│   │   └── get_weather.json
-│   └── more_schemas/
 ```
 
 ---
@@ -398,7 +390,6 @@ When using the terminal interface, type these commands:
 Three steps to add new tools:
 
 1. **Logic**: Add Python script to `tools/<new_domain>/`
-2. **Schema**: Define inputs in `schemas/<new_domain>/<tool_name>.json`
 3. **Register**: Import in `server.py` and wrap with `@mcp.tool()`
 
 ---
