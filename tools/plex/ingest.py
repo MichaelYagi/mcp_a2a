@@ -104,13 +104,29 @@ def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> Dict
 
             # Chunk and add to RAG
             chunks_added = 0
-            for chunk in chunk_stream(iter(subtitle_lines), chunk_size=400):
+            for chunk in chunk_stream(iter(subtitle_lines), chunk_size=1500):
+                # Don't prepend metadata to every chunk - it's redundant and causes size issues
+                # Instead, store metadata once and reference via source
                 rag_add(
-                    text=f"{metadata_text}\n\n{chunk}",
-                    source=f"plex:{media_id}",
-                    chunk_size=400
+                    text=chunk,  # Just the subtitle text
+                    source=f"plex:{media_id}:{title}",  # Include title in source for reference
+                    chunk_size=1500
                 )
                 chunks_added += 1
+
+            # Store metadata separately once (not in every chunk)
+            # Add a single metadata chunk for this item
+            metadata_summary = f"{title} - {metadata_text}"
+            if len(metadata_summary) < 1500:  # Only if it fits
+                try:
+                    rag_add(
+                        text=metadata_summary,
+                        source=f"plex:{media_id}:metadata",
+                        chunk_size=1500
+                    )
+                    chunks_added += 1
+                except Exception as e:
+                    logger.warning(f"⚠️  Could not add metadata chunk: {e}")
 
             mark_as_ingested(media_id, status="success")
 

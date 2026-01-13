@@ -187,32 +187,31 @@ def parse_srt(content: str) -> List[str]:
     return lines
 
 
-def chunk_stream(lines: Iterator[str], chunk_size: int = 400) -> Iterator[str]:
+def chunk_stream(lines: Iterator[str], chunk_size: int = 1500) -> Iterator[str]:
     """
-    Chunk text lines into larger blocks.
+    Chunk text lines into larger blocks by character count.
 
     Args:
         lines: Iterator of text lines
-        chunk_size: Number of words per chunk (default: 400 for token safety)
+        chunk_size: Maximum characters per chunk (default: 1500)
 
     Yields:
         Text chunks
     """
     current_chunk = []
-    current_word_count = 0
+    current_length = 0
 
     for line in lines:
-        words = line.split()
-        word_count = len(words)
+        line_length = len(line)
 
-        if current_word_count + word_count > chunk_size and current_chunk:
-            # Yield current chunk
+        # If adding this line would exceed limit and we have content, yield chunk
+        if current_length + line_length > chunk_size and current_chunk:
             yield ' '.join(current_chunk)
             current_chunk = []
-            current_word_count = 0
+            current_length = 0
 
         current_chunk.append(line)
-        current_word_count += word_count
+        current_length += line_length + 1  # +1 for space
 
     # Yield remaining chunk
     if current_chunk:
