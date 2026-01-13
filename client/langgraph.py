@@ -80,10 +80,11 @@ def router(state):
             logger.info(f"🎯 Router: Ingest already completed - skipping to END")
             return "continue"
 
-        # Check for EXPLICIT RAG requests (highest priority)
-        if any(keyword in content for keyword in
-               ["using rag", "use rag", "rag tool", "with rag", "search rag", "query rag"]):
-            logger.info(f"🎯 Router: User explicitly requested RAG - routing there")
+        # Check for EXPLICIT RAG SEARCH requests (not just "rag" in general)
+        # IMPORTANT: Only route to RAG node for actual SEARCH queries
+        rag_search_keywords = ["search rag", "query rag", "find in rag", "look up in rag"]
+        if any(keyword in content for keyword in rag_search_keywords):
+            logger.info(f"🎯 Router: User explicitly requested RAG SEARCH - routing there")
             return "rag"
 
     # If the AI made tool calls, go to tools node
@@ -351,6 +352,18 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
     user_message_lower = user_message.lower()
     logger = logging.getLogger("mcp_client")
 
+    # PRIORITY: Check for EXPLICIT tool name mentions
+    # If user explicitly names a tool, assume they know what they want
+    for tool in all_tools:
+        tool_name_lower = tool.name.lower()
+        # Check for exact tool name or "use X tool" patterns
+        if (tool_name_lower in user_message_lower or
+                f"use {tool_name_lower}" in user_message_lower or
+                f"call {tool_name_lower}" in user_message_lower or
+                f"using {tool_name_lower}" in user_message_lower):
+            logger.info(f"🎯 User explicitly requested {tool.name}")
+            return [tool]  # Return ONLY that tool
+
     # LLM-ONLY DETECTION
     # Check if user explicitly wants LLM-only response without tools
     llm_only_keywords = [
@@ -571,6 +584,21 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
             "rag_add_tool", "add_entry", "list_entries", "get_entry", "search_entries"
         ]]
 
+    # RAG diagnostic keywords (add BEFORE rag_search_keywords)
+    rag_diagnostic_keywords = [
+        "diagnose rag", "rag diagnose", "check rag", "rag status",
+        "missing subtitles", "incomplete rag", "rag problems",
+        "what's missing", "what's not ingested", "rag health"
+    ]
+
+    if any(keyword in user_message_lower for keyword in rag_diagnostic_keywords):
+        logger.info("🎯 Detected RAG DIAGNOSTIC intent")
+        return [t for t in all_tools if t.name in [
+            "rag_diagnose_tool",
+            "semantic_media_search_text",  # To look up specific items
+            "rag_search_tool"  # To verify what's in RAG
+        ]]
+
     # RAG search keywords
     rag_search_keywords = [
         "using the rag tool", "search my notes", "what do i know about",
@@ -582,6 +610,20 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
         logger.info("🎯 Detected RAG SEARCH intent")
         return [t for t in all_tools if t.name in [
             "rag_search_tool", "search_entries", "search_semantic", "search_by_tag"
+        ]]
+
+    # Plex ingestion keywords
+    plex_ingest_keywords = [
+        "ingest", "ingest plex", "ingest from plex", "ingest next",
+        "add plex to rag", "ingest batch", "process plex", "load plex"
+    ]
+
+    if any(keyword in user_message_lower for keyword in plex_ingest_keywords):
+        logger.info("🎯 Detected PLEX INGEST intent")
+        return [t for t in all_tools if t.name in [
+            "plex_ingest_batch",
+            "rag_search_tool",  # To verify after ingestion
+            "semantic_media_search_text"  # To find what was ingested
         ]]
 
     # Media/Plex keywords
@@ -822,20 +864,23 @@ def create_langgraph_agent(llm_with_tools, tools):
         try:
             logger.info("📥 Starting ingest operation...")
             limit = 5
+            rescan_no_subtitles = False
             messages = state["messages"]
 
+            # Extract parameters from LLM tool call
             for msg in reversed(messages):
                 if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
                     for tool_call in msg.tool_calls:
                         if tool_call.get('name') == 'plex_ingest_batch':
                             args = tool_call.get('args', {})
                             limit = args.get('limit', 5)
-                            logger.info(f"📥 Using limit={limit} from LLM tool call")
+                            rescan_no_subtitles = args.get('rescan_no_subtitles', False)
+                            logger.info(f"📥 Using limit={limit}, rescan={rescan_no_subtitles} from LLM tool call")
                             break
                     break
 
-            logger.info(f"📥 Starting ingest operation with limit={limit}...")
-            result = await ingest_tool.ainvoke({"limit": limit})
+            logger.info(f"📥 Starting ingest operation with limit={limit}, rescan={rescan_no_subtitles}...")
+            result = await ingest_tool.ainvoke({"limit": limit, "rescan_no_subtitles": rescan_no_subtitles})
 
             logger.info(f"🔍 Raw result type: {type(result)}")
             logger.info(f"🔍 Raw result: {result}")
@@ -897,23 +942,58 @@ def create_langgraph_agent(llm_with_tools, tools):
             if isinstance(result, dict) and "error" in result:
                 msg = AIMessage(content=f"Ingestion error: {result['error']}")
             else:
-                ingested = result.get('ingested', []) if isinstance(result, dict) else []
-                remaining = result.get('remaining', 0) if isinstance(result, dict) else 0
-                total_ingested = result.get('total_ingested', 0) if isinstance(result, dict) else 0
+                ingested = result.get('ingested', [])
+                skipped = result.get('skipped', [])
+                stats = result.get('stats', {})
 
                 if ingested:
-                    items_list = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(ingested))
+                    # Build detailed list of ingested items
+                    items_list = []
+                    for item in ingested:
+                        items_list.append(
+                            f"✅ **{item['title']}**\n"
+                            f"   • ID: {item['id']}\n"
+                            f"   • Chunks: {item['subtitle_chunks']}\n"
+                            f"   • Words: ~{item['subtitle_word_count']}"
+                        )
 
-                    msg = AIMessage(
-                        content=f"✅ **Successfully ingested {len(ingested)} items:**\n\n{items_list}\n\n"
-                                f"📊 **Total items in RAG:** {total_ingested}\n"
-                                f"📊 **Remaining to ingest:** {remaining}\n\n"
-                                f"Ingestion complete. You can now search this content using the RAG tool."
-                    )
+                    message_parts = [
+                        f"📥 **Successfully Ingested {len(ingested)} Items:**\n",
+                        "\n\n".join(items_list)
+                    ]
                 else:
-                    msg = AIMessage(
-                        content=f"✅ All items already ingested.\n\n📊 **Total items in RAG:** {total_ingested}"
-                    )
+                    message_parts = ["📥 **Ingestion Complete - No New Items Added**"]
+
+                # Show skipped items grouped by reason
+                if skipped:
+                    already_ingested = [s for s in skipped if "already ingested" in s['reason'].lower()]
+                    no_subtitles = [s for s in skipped if "no subtitles" in s['reason'].lower()]
+
+                    if already_ingested:
+                        message_parts.append(
+                            f"\n\n⏭️  **Already Ingested ({len(already_ingested)} items):**\n" +
+                            "\n".join(f"   • {s['title']}" for s in already_ingested[:3]) +
+                            (f"\n   • ... and {len(already_ingested) - 3} more" if len(already_ingested) > 3 else "")
+                        )
+
+                    if no_subtitles:
+                        message_parts.append(
+                            f"\n\n⚠️  **Missing Subtitles ({len(no_subtitles)} items):**\n" +
+                            "\n".join(f"   • {s['title']}" for s in no_subtitles[:3]) +
+                            (f"\n   • ... and {len(no_subtitles) - 3} more" if len(no_subtitles) > 3 else "")
+                        )
+
+                # Add clear statistics
+                message_parts.extend([
+                    f"\n\n📊 **Library Statistics:**",
+                    f"• Total items in Plex: **{stats.get('total_items', 0)}**",
+                    f"• Successfully in RAG: **{stats.get('successfully_ingested', 0)}** items with subtitles",
+                    f"• Missing subtitles: **{stats.get('missing_subtitles', 0)}** items",
+                    f"• Not yet processed: **{stats.get('remaining_unprocessed', 0)}** items",
+                    f"\n💡 Use `rescan_no_subtitles=True` to re-check items that were missing subtitles."
+                ])
+
+                msg = AIMessage(content="\n".join(message_parts))
 
             logger.info("✅ Ingest operation completed successfully")
 

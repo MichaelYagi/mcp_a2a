@@ -101,6 +101,7 @@ from tools.text_tools.concept_contextualizer import concept_contextualizer
 # ─────────────────────────────────────────────
 from tools.rag.rag_add import rag_add
 from tools.rag.rag_search import rag_search
+from tools.rag.rag_diagnose import diagnose_rag
 # ─────────────────────────────────────────────
 # Plex Tools
 # ─────────────────────────────────────────────
@@ -1180,30 +1181,94 @@ def rag_search_tool(query: str, top_k: int = 5, min_score: float = 0.0) -> str:
 
 
 @mcp.tool()
-def plex_ingest_batch(limit: int = 5) -> str:
+def rag_diagnose_tool() -> str:
+    """
+    Diagnose RAG database for incomplete or problematic entries.
+
+    Args:
+        None
+
+    Returns:
+        JSON string with:
+        - total_items: Total Plex items available
+        - ingested_count: Number of items successfully ingested
+        - missing_subtitles: Array of items with no subtitle data:
+          - title: Movie/episode title
+          - id: Plex ratingKey
+          - type: "movie" or "episode"
+        - not_yet_ingested: Array of items not yet processed:
+          - title: Movie/episode title
+          - id: Plex ratingKey
+          - type: "movie" or "episode"
+        - statistics: Overall ingestion statistics
+
+    Use to find which Plex items are missing subtitle data or haven't been ingested yet.
+    Helps identify gaps in the RAG database.
+    """
+    logger.info(f"🛠 [server] rag_diagnose_tool called")
+    result = diagnose_rag()
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def plex_ingest_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> str:
     """
     Ingest Plex media subtitles into RAG database in batches.
 
     Args:
         limit (int, optional): Number of items to process in this batch (default: 5)
+        rescan_no_subtitles (bool, optional): If True, re-check items that previously had no subtitles.
+                                             Use this if you've added subtitle files to your media. (default: False)
 
     Returns:
         JSON string with:
-        - ingested: Array of ingested item titles
-        - total_ingested: Total items in RAG database after this batch
-        - remaining: Number of items still to ingest
-        - items_processed: Number of items processed in this batch
+        - ingested: Array of successfully ingested items with details:
+          - title: Movie/episode title
+          - id: Plex ratingKey
+          - subtitle_chunks: Number of text chunks added
+          - subtitle_word_count: Approximate words from subtitles
+        - skipped: Array of items skipped:
+          - title: Movie/episode title
+          - id: Plex ratingKey
+          - reason: Why it was skipped ("Already ingested with subtitles" or "No subtitles found")
+        - stats: Overall statistics:
+          - total_items: Total items in Plex library
+          - successfully_ingested: Items with subtitles in RAG
+          - missing_subtitles: Items without subtitles
+          - remaining_unprocessed: Items not yet checked
+        - items_processed: Number of items examined in this batch
         - error: Error message if something went wrong
 
-    Processes subtitle files for movies/TV shows and adds them to the vector database for semantic search.
+    Processes subtitle files for movies/TV shows and adds them to the vector database.
+    Shows clear statistics about what's in RAG vs what's missing subtitles.
 
-    Use for batch ingestion of Plex library content. Call multiple times to ingest entire library.
+    Use rescan_no_subtitles=True if you've added subtitle files and want to re-check previously skipped items.
     """
-    logger.info(f"🛠 [server] plex_ingest_batch called with limit: {limit}")
-    result = ingest_next_batch(limit)
+    logger.info(f"🛠 [server] plex_ingest_batch called with limit: {limit}, rescan: {rescan_no_subtitles}")
+    result = ingest_next_batch(limit, rescan_no_subtitles)
     logger.info(f"🛠 [server] plex_ingest_batch returning: {result}")
     return json.dumps(result, indent=2)
 
+@mcp.tool()
+def rag_rescan_no_subtitles() -> str:
+    """
+    Reset items that were marked as 'no subtitles' to allow re-scanning.
+
+    Use this after you've added subtitle files to your Plex media and want
+    to re-check items that were previously skipped.
+
+    Returns:
+        JSON string with:
+        - reset_count: Number of items unmarked for re-scanning
+        - message: Confirmation message
+    """
+    logger.info(f"🛠 [server] rag_rescan_no_subtitles called")
+    from tools.rag.rag_storage import reset_no_subtitle_items
+    count = reset_no_subtitle_items()
+    return json.dumps({
+        "reset_count": count,
+        "message": f"Reset {count} items for re-scanning. Run plex_ingest_batch to check them again."
+    }, indent=2)
 
 # ─────────────────────────────────────────────
 # Plex Tools

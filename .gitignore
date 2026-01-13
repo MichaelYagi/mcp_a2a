@@ -20,3 +20,4 @@ knowledge/
 /rag_db/
 /debug_ingest.py
 /test_metrics.py
+/test_plex_subtitles.py

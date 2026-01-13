@@ -1,7 +1,13 @@
+"""
+Plex Ingestion Tool
+Ingests Plex media subtitles into RAG database
+"""
+
 import json
 import logging
 from pathlib import Path
 from typing import Dict, Any
+from tools.rag.rag_storage import check_if_ingested, mark_as_ingested, get_ingestion_stats
 
 logger = logging.getLogger("mcp_server")
 
@@ -34,87 +40,110 @@ def save_progress(progress: Dict[str, bool]) -> None:
         json.dump(progress, f, indent=2)
 
 
-def ingest_next_batch(limit: int = 5) -> Dict[str, Any]:
+def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> Dict[str, Any]:
     """
-    Ingest the next batch of Plex items into RAG.
+    Ingest the next batch of unprocessed Plex items into RAG.
 
     Args:
-        limit: Maximum number of items to ingest
+        limit: Maximum number of items to process
+        rescan_no_subtitles: If True, re-check items that previously had no subtitles
 
     Returns:
-        Dictionary with ingested items, remaining count, and total ingested
+        Dictionary with ingestion results including detailed item information
     """
     try:
-        progress = load_progress()
-        ingested = []
-        remaining = 0
-        count = 0
+        ingested_items = []
+        skipped_items = []
+        processed_count = 0
 
-        media_stream = stream_all_media()
+        logger.info(f"📥 Starting batch ingestion (limit: {limit}, rescan: {rescan_no_subtitles})")
 
-        for item in media_stream:
-            rating_key = str(item["id"])
+        # Stream through all media
+        for media_item in stream_all_media():
+            if processed_count >= limit:
+                break
 
-            # Skip already ingested items
-            if rating_key in progress:
+            media_id = str(media_item["id"])
+            title = media_item["title"]
+
+            # Check if already ingested
+            if check_if_ingested(media_id, skip_no_subtitles=rescan_no_subtitles):
+                logger.info(f"⏭️  Skipping (already ingested): {title}")
+                skipped_items.append({
+                    "title": title,
+                    "id": media_id,
+                    "reason": "Already ingested with subtitles"
+                })
+                processed_count += 1
                 continue
 
-            # Count remaining items after limit
-            if count >= limit:
-                remaining += 1
+            logger.info(f"📥 Processing: {title}")
+
+            # Get metadata
+            metadata_text = extract_metadata(media_item)
+
+            # Stream subtitles
+            subtitle_lines = list(stream_subtitles(media_id))
+
+            if not subtitle_lines:
+                logger.warning(f"⚠️  No subtitles found for: {title}")
+                skipped_items.append({
+                    "title": title,
+                    "id": media_id,
+                    "reason": "No subtitles found"
+                })
+                mark_as_ingested(media_id, status="no_subtitles")
+                processed_count += 1
                 continue
 
-            logger.info(f"📀 Ingesting {count+1} of {limit}: {item['title']}")
+            # Combine metadata + subtitles
+            full_text = f"{metadata_text}\n\nSubtitles:\n" + "\n".join(subtitle_lines)
 
-            # 1. Add metadata to RAG
-            meta_text = extract_metadata(item)
-            rag_add(
-                text=meta_text,
-                source=f"plex:metadata:{rating_key}",
-                chunk_size=200
-            )
+            # Count words for feedback
+            word_count = len(full_text.split())
 
-            # 2. Add subtitles to RAG (if available)
-            try:
-                subtitle_chunks = list(chunk_stream(stream_subtitles(rating_key)))
+            # Chunk and add to RAG
+            chunks_added = 0
+            for chunk in chunk_stream(iter(subtitle_lines), chunk_size=400):
+                rag_add(
+                    text=f"{metadata_text}\n\n{chunk}",
+                    source=f"plex:{media_id}",
+                    chunk_size=400
+                )
+                chunks_added += 1
 
-                if subtitle_chunks:
-                    for chunk in subtitle_chunks:
-                        rag_add(
-                            text=chunk,
-                            source=f"plex:subtitles:{rating_key}",
-                            chunk_size=500
-                        )
-                    logger.info(f"  ✓ Added {len(subtitle_chunks)} subtitle chunks")
-                else:
-                    logger.info(f"  ⚠ No subtitles found")
+            mark_as_ingested(media_id, status="success")
 
-            except Exception as e:
-                logger.warning(f"  ⚠ Could not process subtitles: {e}")
+            ingested_items.append({
+                "title": title,
+                "id": media_id,
+                "subtitle_chunks": chunks_added,
+                "subtitle_word_count": word_count
+            })
 
-            # Mark as ingested
-            progress[rating_key] = True
-            ingested.append(item["title"])
-            count += 1
+            logger.info(f"✅ Ingested: {title} ({chunks_added} chunks, ~{word_count} words)")
+            processed_count += 1
 
-        # Save progress
-        save_progress(progress)
+        # Get total stats
+        stats = get_ingestion_stats()
 
-        logger.info(f"✅ Ingested {len(ingested)} items, {remaining} remaining")
-
-        return {
-            "ingested": ingested,
-            "remaining": remaining,
-            "total_ingested": len(progress)  # Add this line
+        result = {
+            "ingested": ingested_items,
+            "skipped": skipped_items,
+            "stats": {
+                "total_items": stats["total_items"],
+                "successfully_ingested": stats["successfully_ingested"],
+                "missing_subtitles": stats["missing_subtitles"],
+                "remaining_unprocessed": stats["remaining"]
+            },
+            "items_processed": processed_count
         }
+
+        logger.info(f"📊 Batch complete: {len(ingested_items)} ingested, {len(skipped_items)} skipped")
+        return result
 
     except Exception as e:
-        logger.error(f"❌ Error in ingest_next_batch: {e}")
+        logger.error(f"❌ Ingestion error: {e}")
         import traceback
         traceback.print_exc()
-        return {
-            "error": str(e),
-            "ingested": [],
-            "remaining": 0,
-            "total_ingested": 0  # Add this line
-        }
+        return {"error": str(e)}

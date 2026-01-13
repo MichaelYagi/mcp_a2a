@@ -117,8 +117,7 @@ def stream_subtitles(rating_key: str) -> Iterator[str]:
         # Check if media has subtitles
         for part in media.iterParts():
             for stream in part.subtitleStreams():
-                # Only process English subtitles
-                if stream.language == 'English' or stream.languageCode == 'eng':
+                if stream.key is not None:
                     logger.info(f"📝 Found subtitle stream: {stream.title or 'Untitled'}")
 
                     # Try to get subtitle content
@@ -188,13 +187,13 @@ def parse_srt(content: str) -> List[str]:
     return lines
 
 
-def chunk_stream(lines: Iterator[str], chunk_size: int = 500) -> Iterator[str]:
+def chunk_stream(lines: Iterator[str], chunk_size: int = 400) -> Iterator[str]:
     """
     Chunk text lines into larger blocks.
 
     Args:
         lines: Iterator of text lines
-        chunk_size: Number of words per chunk
+        chunk_size: Number of words per chunk (default: 400 for token safety)
 
     Yields:
         Text chunks

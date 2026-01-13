@@ -1,77 +1,78 @@
-from typing import Dict, Any, Optional
-from langchain_ollama import OllamaEmbeddings
-from datetime import datetime
-import uuid
-import logging
+"""
+RAG Add Tool
+Adds text to the RAG vector database with embedding generation
+"""
 
-from .rag_utils import load_rag_db, save_rag_db, chunk_text
+import logging
+from typing import Dict, Any, List
+import json
 
 logger = logging.getLogger("mcp_server")
 
-# Initialize embeddings model
-embeddings_model = OllamaEmbeddings(model="bge-large")
 
-
-def rag_add(text: str, source: Optional[str] = None, chunk_size: int = 500) -> Dict[str, Any]:
+def split_text_by_words(text: str, max_words: int = 400) -> List[str]:
     """
-    Add text to the RAG system with embeddings.
+    Split text into chunks by word count.
 
     Args:
-        text: The text content to add
-        source: Optional source identifier
-        chunk_size: Size of text chunks (default: 500 words)
+        text: Text to split
+        max_words: Maximum words per chunk (default: 400, safe for 512 token limit)
 
     Returns:
-        Dictionary with added document info
+        List of text chunks
     """
+    words = text.split()
+    chunks = []
+
+    for i in range(0, len(words), max_words):
+        chunk = ' '.join(words[i:i + max_words])
+        chunks.append(chunk)
+
+    return chunks
+
+
+def rag_add(text: str, source: str = None, chunk_size: int = 400) -> Dict[str, Any]:
+    """
+    Add text to RAG database.
+
+    Args:
+        text: Text to add
+        source: Source identifier (e.g., "plex:12345")
+        chunk_size: Maximum words per chunk (reduced from 500 to 400 for safety)
+
+    Returns:
+        Dictionary with success status and metadata
+    """
+    from tools.rag.rag_vector_db import add_to_rag
+
+    logger.info(f"📝 Adding text to RAG (length: {len(text)}, chunk_size: {chunk_size})")
+
     try:
-        logger.info(f"📝 Adding text to RAG (length: {len(text)})")
-
-        # Load existing database
-        db = load_rag_db()
-
-        # Split text into chunks
-        chunks = chunk_text(text, chunk_size=chunk_size)
+        # Split into chunks (use smaller chunk size to avoid token limit)
+        chunks = split_text_by_words(text, max_words=chunk_size)
         logger.info(f"📦 Split into {len(chunks)} chunks")
 
-        # Generate embeddings for all chunks
-        chunk_embeddings = embeddings_model.embed_documents(chunks)
+        # Add each chunk to RAG
+        added_count = 0
+        for i, chunk in enumerate(chunks):
+            # Verify chunk isn't too long (safety check)
+            if len(chunk) > 2000:  # ~500 tokens max
+                logger.warning(f"⚠️  Chunk {i + 1} too long ({len(chunk)} chars), splitting further...")
+                sub_chunks = split_text_by_words(chunk, max_words=300)
+                for sub_chunk in sub_chunks:
+                    add_to_rag(sub_chunk, source=source)
+                    added_count += 1
+            else:
+                add_to_rag(chunk, source=source)
+                added_count += 1
 
-        added_docs = []
-
-        # Store each chunk with its embedding
-        for idx, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings)):
-            doc_id = str(uuid.uuid4())
-
-            doc = {
-                "id": doc_id,
-                "text": chunk,
-                "embedding": embedding,
-                "metadata": {
-                    "source": source or "unknown",
-                    "chunk_index": idx,
-                    "timestamp": datetime.now().isoformat(),
-                    "chunk_count": len(chunks)
-                }
-            }
-
-            db.append(doc)
-            added_docs.append({
-                "id": doc_id,
-                "chunk_index": idx,
-                "text_preview": chunk[:100] + "..." if len(chunk) > 100 else chunk
-            })
-
-        # Save updated database
-        save_rag_db(db)
-
-        logger.info(f"✅ Added {len(chunks)} chunks to RAG")
+        logger.info(f"✅ Added {added_count} chunks to RAG")
 
         return {
             "success": True,
-            "chunks_added": len(chunks),
-            "documents": added_docs,
-            "source": source or "unknown"
+            "chunks_added": added_count,
+            "source": source,
+            "original_length": len(text)
         }
 
     except Exception as e:
