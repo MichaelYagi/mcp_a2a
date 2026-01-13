@@ -599,6 +599,19 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
             "rag_search_tool"  # To verify what's in RAG
         ]]
 
+    # RAG status keywords
+    rag_status_keywords = [
+        "rag status", "check rag", "how many in rag", "what's in rag",
+        "rag contents", "rag count", "rag size", "rag info"
+    ]
+
+    if any(keyword in user_message_lower for keyword in rag_status_keywords):
+        logger.info("🎯 Detected RAG STATUS intent")
+        return [t for t in all_tools if t.name in [
+            "rag_status_tool",
+            "rag_diagnose_tool"
+        ]]
+
     # RAG search keywords
     rag_search_keywords = [
         "using the rag tool", "search my notes", "what do i know about",

@@ -21,7 +21,7 @@ def diagnose_rag() -> Dict[str, Any]:
     try:
         logger.info("🔍 Starting RAG diagnostics...")
 
-        ingested_ids = load_ingested_items()
+        ingested_items = load_ingested_items()
         missing_subtitles = []
         not_yet_ingested = []
 
@@ -32,8 +32,17 @@ def diagnose_rag() -> Dict[str, Any]:
             media_type = media_item["type"]
 
             # Check if already ingested
-            if media_id not in ingested_ids:
-                # Check if it has subtitles
+            if media_id in ingested_items:
+                status = ingested_items[media_id]
+                if status == "no_subtitles":
+                    missing_subtitles.append({
+                        "title": title,
+                        "id": media_id,
+                        "type": media_type
+                    })
+                    logger.debug(f"❌ No subtitles: {title}")
+            else:
+                # Not yet processed - check if it has subtitles
                 subtitle_lines = list(stream_subtitles(media_id))
 
                 if not subtitle_lines:
@@ -42,7 +51,7 @@ def diagnose_rag() -> Dict[str, Any]:
                         "id": media_id,
                         "type": media_type
                     })
-                    logger.info(f"❌ No subtitles: {title}")
+                    logger.debug(f"❌ No subtitles: {title}")
                 else:
                     not_yet_ingested.append({
                         "title": title,
@@ -50,26 +59,28 @@ def diagnose_rag() -> Dict[str, Any]:
                         "type": media_type,
                         "subtitle_lines": len(subtitle_lines)
                     })
-                    logger.info(f"⏳ Not yet ingested: {title} ({len(subtitle_lines)} subtitle lines)")
+                    logger.debug(f"⏳ Not yet ingested: {title} ({len(subtitle_lines)} subtitle lines)")
 
         stats = get_ingestion_stats()
 
         result = {
             "total_items": stats["total_items"],
-            "ingested_count": stats["total_ingested"],
+            "ingested_count": stats["successfully_ingested"],  # Fixed key name
             "missing_subtitles": missing_subtitles,
             "not_yet_ingested": not_yet_ingested,
             "statistics": {
                 "items_with_no_subtitles": len(missing_subtitles),
                 "items_ready_to_ingest": len(not_yet_ingested),
-                "completion_percentage": round((stats["total_ingested"] / stats["total_items"] * 100), 2) if stats[
-                                                                                                                 "total_items"] > 0 else 0
+                "items_successfully_ingested": stats["successfully_ingested"],
+                "items_marked_no_subtitles": stats["missing_subtitles"],
+                "total_processed": stats["total_processed"],
+                "completion_percentage": round((stats["successfully_ingested"] / stats["total_items"] * 100), 2) if stats["total_items"] > 0 else 0
             }
         }
 
         logger.info(f"📊 Diagnostics complete:")
         logger.info(f"  - Total items: {stats['total_items']}")
-        logger.info(f"  - Ingested: {stats['total_ingested']}")
+        logger.info(f"  - Successfully ingested: {stats['successfully_ingested']}")
         logger.info(f"  - Missing subtitles: {len(missing_subtitles)}")
         logger.info(f"  - Ready to ingest: {len(not_yet_ingested)}")
 

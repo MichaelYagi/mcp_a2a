@@ -1209,6 +1209,47 @@ def rag_diagnose_tool() -> str:
     result = diagnose_rag()
     return json.dumps(result, indent=2)
 
+@mcp.tool()
+def rag_status_tool() -> str:
+    """
+    Get quick status of RAG database without full diagnostics.
+
+    Returns:
+        JSON string with:
+        - rag_documents: Number of documents in RAG database
+        - total_words: Total words stored
+        - unique_sources: Number of unique media items
+        - ingestion_stats: Summary from storage tracking
+
+    Use for quick checks of RAG database health.
+    """
+    logger.info(f"🛠 [server] rag_status_tool called")
+    from tools.rag.rag_vector_db import get_rag_stats
+    from tools.rag.rag_storage import get_ingestion_stats
+
+    try:
+        rag_stats = get_rag_stats()
+        ingestion_stats = get_ingestion_stats()
+
+        result = {
+            "rag_database": {
+                "total_documents": rag_stats.get("total_documents", 0),
+                "total_words": rag_stats.get("total_words", 0),
+                "unique_sources": rag_stats.get("unique_sources", 0)
+            },
+            "ingestion_tracking": {
+                "total_plex_items": ingestion_stats["total_items"],
+                "successfully_ingested": ingestion_stats["successfully_ingested"],
+                "marked_no_subtitles": ingestion_stats["missing_subtitles"],
+                "not_yet_processed": ingestion_stats["remaining"]
+            },
+            "summary": f"{ingestion_stats['successfully_ingested']} items ingested out of {ingestion_stats['total_items']} total ({round(ingestion_stats['successfully_ingested'] / ingestion_stats['total_items'] * 100, 1)}% complete)"
+        }
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"❌ Error getting RAG status: {e}")
+        return json.dumps({"error": str(e)}, indent=2)
 
 @mcp.tool()
 def plex_ingest_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> str:
