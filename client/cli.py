@@ -1,5 +1,5 @@
 """
-CLI Module
+CLI Module (WITH MULTI-AGENT SUPPORT - FIXED STATE)
 Handles command-line interface and user input
 """
 
@@ -28,8 +28,9 @@ def input_thread(input_queue, stop_event):
             break
 
 
-async def cli_input_loop(agent, logger, tools, model_name, conversation_state, run_agent_fn, models_module, system_prompt, create_agent_fn):
-    """Handle CLI input using a separate thread"""
+async def cli_input_loop(agent, logger, tools, model_name, conversation_state, run_agent_fn, models_module,
+                         system_prompt, create_agent_fn, orchestrator=None, multi_agent_state=None):
+    """Handle CLI input using a separate thread (with multi-agent support)"""
     input_queue = Queue()
     stop_event = threading.Event()
 
@@ -50,7 +51,8 @@ async def cli_input_loop(agent, logger, tools, model_name, conversation_state, r
                 if query.startswith(":"):
                     handled, response, new_agent, new_model = await handle_command(
                         query, tools, model_name, conversation_state, models_module,
-                        system_prompt, agent_ref=[agent], create_agent_fn=create_agent_fn, logger=logger
+                        system_prompt, agent_ref=[agent], create_agent_fn=create_agent_fn,
+                        logger=logger, orchestrator=orchestrator, multi_agent_state=multi_agent_state
                     )
 
                     if handled:

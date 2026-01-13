@@ -1,5 +1,5 @@
 """
-MCP Client - Main Entry Point
+MCP Client - Main Entry Point (WITH MULTI-AGENT INTEGRATION - FIXED STATE)
 """
 
 import asyncio
@@ -10,8 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
-from langchain_core.messages import SystemMessage
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from mcp_use.client.client import MCPClient
 from mcp_use.agents.mcpagent import MCPAgent
 
@@ -23,10 +22,17 @@ from client import websocket
 from client import cli
 from client import utils
 
+# Import multi-agent system
+try:
+    from client.multi_agent import MultiAgentOrchestrator, should_use_multi_agent
+    MULTI_AGENT_AVAILABLE = True
+except ImportError:
+    print("⚠️ Multi-agent system not available. Add multi_agent.py to client/ directory.")
+    MULTI_AGENT_AVAILABLE = False
+
 # Import system monitor conditionally
 try:
     from tools.system_monitor import system_monitor_loop
-
     SYSTEM_MONITOR_AVAILABLE = True
 except ImportError:
     SYSTEM_MONITOR_AVAILABLE = False
@@ -38,6 +44,11 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 # Configuration
 MAX_MESSAGE_HISTORY = int(os.getenv("MAX_MESSAGE_HISTORY", "20"))
+
+# Shared multi-agent state (mutable dict so changes propagate)
+MULTI_AGENT_STATE = {
+    "enabled": MULTI_AGENT_AVAILABLE and os.getenv("MULTI_AGENT_ENABLED", "true").lower() == "true"
+}
 
 # Default system prompt - will be overridden if tool_usage_guide.md exists
 SYSTEM_PROMPT = """# SYSTEM INSTRUCTION: YOU ARE A TOOL-USING AGENT
@@ -117,7 +128,7 @@ async def main():
         logger.warning(f"⚠️  System prompt file not found at {system_prompt_path}, using default")
 
     # Log first 200 chars of system prompt for verification
-    logger.info(f"📝 System prompt preview: {SYSTEM_PROMPT[:200]}...")
+    logger.info(f"📋 System prompt preview: {SYSTEM_PROMPT[:200]}...")
 
     # Check for available models
     available = models.get_available_models()
@@ -174,20 +185,77 @@ async def main():
     # Create LangGraph agent
     agent = langgraph.create_langgraph_agent(llm_with_tools, tools)
 
-    # Create wrapper for run_agent with all needed parameters
+    # Create multi-agent orchestrator if available
+    orchestrator = None
+    if MULTI_AGENT_AVAILABLE:
+        orchestrator = MultiAgentOrchestrator(llm, tools, logger)
+        logger.info(f"🎭 Multi-agent orchestrator created (enabled: {MULTI_AGENT_STATE['enabled']})")
+    else:
+        logger.warning("⚠️ Multi-agent system not available")
+
+    # Create enhanced agent runner with multi-agent support
     async def run_agent_wrapper(agent, conversation_state, user_message, logger, tools):
-        return await langgraph.run_agent(
-            agent,
-            conversation_state,
-            user_message,
-            logger,
-            tools,
-            SYSTEM_PROMPT,
-            MAX_MESSAGE_HISTORY
+        """Enhanced agent runner with multi-agent support"""
+
+        # Check if multi-agent should be used (check shared state)
+        use_multi = (
+            MULTI_AGENT_STATE["enabled"] and
+            MULTI_AGENT_AVAILABLE and
+            await should_use_multi_agent(user_message)
         )
+
+        if use_multi and orchestrator:
+            logger.info("🎭 Using MULTI-AGENT execution")
+
+            try:
+                # Execute with multi-agent
+                result_text = await orchestrator.execute(user_message)
+
+                # Add to conversation
+                conversation_state["messages"].append(HumanMessage(content=user_message))
+                conversation_state["messages"].append(AIMessage(content=result_text))
+
+                return {
+                    "messages": conversation_state["messages"],
+                    "multi_agent": True
+                }
+
+            except Exception as e:
+                logger.error(f"❌ Multi-agent execution failed: {e}, falling back to single agent")
+                import traceback
+                traceback.print_exc()
+                # Fallback to single agent
+                use_multi = False
+
+        if not use_multi:
+            logger.info("🤖 Using SINGLE-AGENT execution")
+
+            # Use existing single agent flow
+            return await langgraph.run_agent(
+                agent,
+                conversation_state,
+                user_message,
+                logger,
+                tools,
+                SYSTEM_PROMPT,
+                MAX_MESSAGE_HISTORY
+            )
 
     print("\n🚀 Starting MCP Agent with dual interface support")
     print("=" * 60)
+
+    if MULTI_AGENT_AVAILABLE:
+        if MULTI_AGENT_STATE["enabled"]:
+            print("🎭 Multi-agent mode: ENABLED")
+            print("   Complex queries will be broken down automatically")
+            print("   Use ':multi off' to disable")
+        else:
+            print("🤖 Multi-agent mode: DISABLED")
+            print("   Use ':multi on' to enable")
+    else:
+        print("⚠️  Multi-agent mode: NOT AVAILABLE")
+        print("   Add multi_agent.py to client/ directory to enable")
+    print()
 
     # Open browser
     index_path = PROJECT_ROOT / "index.html"
@@ -206,6 +274,8 @@ async def main():
         models,
         model_name,
         SYSTEM_PROMPT,
+        orchestrator=orchestrator,  # ADD THIS
+        multi_agent_state=MULTI_AGENT_STATE,  # ADD THIS
         host="0.0.0.0",
         port=8765
     )
@@ -256,7 +326,9 @@ async def main():
             run_agent_wrapper,
             models,
             SYSTEM_PROMPT,
-            langgraph.create_langgraph_agent
+            langgraph.create_langgraph_agent,
+            orchestrator,
+            MULTI_AGENT_STATE  # Pass shared state dict
         )
     except KeyboardInterrupt:
         print("\n👋 Shutting down...")

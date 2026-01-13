@@ -43,6 +43,90 @@
             gap: 1rem;
         }
 
+        /* Multi-Agent Toggle Styles */
+        .mode-toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .mode-toggle-label {
+            font-size: 0.85rem;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .mode-icon {
+            font-size: 1rem;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #64748b;
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+
+        .mode-status {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
+            min-width: 80px;
+            text-align: right;
+        }
+
+        .mode-status.multi {
+            color: #a78bfa;
+        }
+
+        .mode-status.single {
+            color: #94a3b8;
+        }
+
         #modelSelect {
             padding: 0.5rem;
             font-size: 0.9rem;
@@ -142,6 +226,12 @@
             border: 1px solid #d9d9d9;
             color: #333;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        /* Multi-agent badge on messages */
+        .assistant.multi-agent {
+            border-left: 4px solid #8b5cf6;
+            background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
         }
 
         .thinking {
@@ -254,8 +344,33 @@
             margin-top: 1rem;
             font-size: 0.95rem;
             margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.25rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            font-style: normal;
+        }
+
+        .status-badge.multi {
+            background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
+            color: white;
+        }
+
+        .status-badge.single {
+            background: #e2e8f0;
+            color: #475569;
+        }
+
+        /* ... rest of existing styles ... */
         #logPanel {
             width: 0;
             background: #1e1e1e;
@@ -651,20 +766,36 @@
             #systemMonitor.open {
                 width: 280px;
             }
+
+            .mode-toggle-container {
+                order: -1;
+                width: 100%;
+            }
         }
 
         /* Mobile */
         @media (max-width: 768px) {
             #header {
                 padding: 0.75rem 1rem;
+                flex-direction: column;
+                gap: 0.75rem;
             }
 
             #header h1 {
                 font-size: 1.1rem;
+                width: 100%;
             }
 
             #topBar {
                 gap: 0.5rem;
+                width: 100%;
+                flex-wrap: wrap;
+            }
+
+            .mode-toggle-container {
+                width: 100%;
+                justify-content: space-between;
+                padding: 0.5rem 0.8rem;
             }
 
             #dashboardBtn, #modelSelect, #logToggle, #monitorToggle {
@@ -843,6 +974,23 @@
     <div id="header">
         <h1>🤖 MCP Browser Client</h1>
         <div id="topBar">
+            <!-- Multi-Agent Toggle -->
+            <div class="mode-toggle-container">
+                <span class="mode-toggle-label">
+                    <span class="mode-icon">🤖</span>
+                    <span>Single</span>
+                </span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="multiAgentToggle" onchange="toggleMultiAgent()">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="mode-toggle-label">
+                    <span class="mode-icon">🎭</span>
+                    <span>Multi</span>
+                </span>
+                <span class="mode-status single" id="modeStatus">Single Agent</span>
+            </div>
+
             <label for="modelSelect" style="color: white;">Model:</label>
             <select id="modelSelect">
                 <option value="llama3.1:8b">Llama 3.1 8B</option>
@@ -953,16 +1101,25 @@
         status.textContent = "Connecting…";
 
         const STORAGE_KEY = "mcp_chat_history";
+        const MULTI_AGENT_KEY = "mcp_multi_agent_enabled";
         const chat = document.getElementById("chat");
         const input = document.getElementById("input");
         const sendBtn = document.getElementById("sendBtn");
         sendBtn.disabled = true;
 
         const modelSelect = document.getElementById("modelSelect");
+        const multiAgentToggle = document.getElementById("multiAgentToggle");
+        const modeStatus = document.getElementById("modeStatus");
 
         let isProcessing = false;
         let chatHistory = loadHistory();
         let thinkingIndicator = null;
+        let multiAgentEnabled = loadMultiAgentSetting();
+        let lastResponseWasMultiAgent = false;
+
+        // Initialize toggle state
+        multiAgentToggle.checked = multiAgentEnabled;
+        updateModeStatus();
 
         // Log panel state
         let logPanelOpen = false;
@@ -973,6 +1130,55 @@
         // System monitor state
         let systemMonitorOpen = false;
         let systemStatsEnabled = true;
+
+        // -------------------------
+        // Multi-Agent Functions
+        // -------------------------
+        function toggleMultiAgent() {
+            multiAgentEnabled = multiAgentToggle.checked;
+            saveMultiAgentSetting(multiAgentEnabled);
+            updateModeStatus();
+
+            // Send command to server
+            const command = multiAgentEnabled ? ":multi on" : ":multi off";
+            ws.send(JSON.stringify({
+                type: "user",
+                text: command
+            }));
+
+            console.log(`Multi-agent mode: ${multiAgentEnabled ? 'ENABLED' : 'DISABLED'}`);
+        }
+
+        function updateModeStatus() {
+            if (multiAgentEnabled) {
+                modeStatus.textContent = "Multi-Agent";
+                modeStatus.className = "mode-status multi";
+            } else {
+                modeStatus.textContent = "Single Agent";
+                modeStatus.className = "mode-status single";
+            }
+        }
+
+        function loadMultiAgentSetting() {
+            const saved = localStorage.getItem(MULTI_AGENT_KEY);
+            return saved === null ? true : saved === "true";
+        }
+
+        function saveMultiAgentSetting(enabled) {
+            localStorage.setItem(MULTI_AGENT_KEY, enabled.toString());
+        }
+
+        function updateStatusWithMode() {
+            let baseStatus = modelSelect.value ? "Model: " + modelSelect.value : "Connected";
+
+            if (lastResponseWasMultiAgent) {
+                status.innerHTML = baseStatus + ' <span class="status-badge multi">🎭 Multi-Agent</span>';
+            } else if (multiAgentEnabled) {
+                status.innerHTML = baseStatus + ' <span class="status-badge multi" style="opacity: 0.5;">🎭 Ready</span>';
+            } else {
+                status.innerHTML = baseStatus + ' <span class="status-badge single">🤖 Single</span>';
+            }
+        }
 
         // -------------------------
         // Utility Functions
@@ -1020,9 +1226,6 @@
                 panel.classList.add('open');
                 button.textContent = '✖ Logs';
                 updateMobileCloseButton();
-                // if (!logWs || logWs.readyState !== WebSocket.OPEN) {
-                //     connectLogWebSocket();
-                // }
             } else {
                 panel.classList.remove('open');
                 button.textContent = '📋 Logs';
@@ -1057,13 +1260,11 @@
 
             logWs.onerror = (error) => {
                 console.error('❌ Log WebSocket error:', error);
-                console.error('Connection URL was:', wsUrl);
-                console.error('Make sure the server is running and port 8766 is accessible');
                 updateLogStatus(false);
             };
 
             logWs.onclose = (event) => {
-                console.log('Log WebSocket closed. Code:', event.code, 'Reason:', event.reason);
+                console.log('Log WebSocket closed. Code:', event.code);
                 updateLogStatus(false);
                 if (logPanelOpen) {
                     console.log('Reconnecting in 3 seconds...');
@@ -1252,13 +1453,20 @@
 
         ws.onopen = () => {
             sendBtn.disabled = false;
-            status.textContent = "Connected";
+            updateStatusWithMode();
 
             ws.send(JSON.stringify({ type: "history_request" }));
             ws.send(JSON.stringify({ type: "list_models" }));
             ws.send(JSON.stringify({ type: "subscribe_system_stats" }));
 
-            // Log right away
+            // Send initial multi-agent state
+            const command = multiAgentEnabled ? ":multi on" : ":multi off";
+            ws.send(JSON.stringify({
+                type: "user",
+                text: command
+            }));
+
+            // Connect to log websocket
             connectLogWebSocket();
         };
 
@@ -1276,6 +1484,11 @@
             }
 
             if (data.type === "cli_user_message" || data.type === "user_message") {
+                // Check if it's a multi-agent command
+                if (data.text.startsWith(":multi")) {
+                    return; // Don't show multi-agent commands in chat
+                }
+
                 addMessage(data.text, "user");
                 showThinking();
                 isProcessing = true;
@@ -1285,16 +1498,40 @@
             }
 
             if (data.type === "cli_assistant_message" || data.type === "assistant_message") {
+                // Check if it's a multi-agent command response
+                if (data.text.includes("Multi-agent mode") || data.text.includes("multi-agent")) {
+                    // Update toggle if needed based on response
+                    if (data.text.includes("ENABLED")) {
+                        multiAgentToggle.checked = true;
+                        multiAgentEnabled = true;
+                        saveMultiAgentSetting(true);
+                    } else if (data.text.includes("DISABLED")) {
+                        multiAgentToggle.checked = false;
+                        multiAgentEnabled = false;
+                        saveMultiAgentSetting(false);
+                    }
+                    updateModeStatus();
+                    hideThinking();
+                    isProcessing = false;
+                    sendBtn.disabled = false;
+                    updateStatusWithMode();
+                    return;
+                }
+
                 hideThinking();
-                addMessage(data.text, "assistant");
+
+                // Check if this was a multi-agent response
+                lastResponseWasMultiAgent = data.multi_agent === true;
+
+                addMessage(data.text, "assistant", lastResponseWasMultiAgent);
                 isProcessing = false;
                 sendBtn.disabled = false;
-                status.textContent = modelSelect.value ? "Model: " + modelSelect.value : "Connected";
+                updateStatusWithMode();
                 return;
             }
 
             if (data.type === "model_switched") {
-                status.textContent = "Model: " + data.model;
+                updateStatusWithMode();
                 sendBtn.disabled = false;
                 isProcessing = false;
                 hideThinking();
@@ -1310,7 +1547,7 @@
                     chatHistory = [];
                     isProcessing = false;
                     sendBtn.disabled = false;
-                    status.textContent = "Connected";
+                    updateStatusWithMode();
                     hideThinking();
                 } else {
                     chatHistory = history;
@@ -1326,7 +1563,7 @@
                     } else {
                         isProcessing = false;
                         sendBtn.disabled = false;
-                        status.textContent = "Connected";
+                        updateStatusWithMode();
                         hideThinking();
                     }
                 }
@@ -1347,7 +1584,7 @@
                 if (data.last_used && data.models.includes(data.last_used)) {
                     select.value = data.last_used;
                     if (!isProcessing) {
-                        status.textContent = "Model: " + data.last_used;
+                        updateStatusWithMode();
                     }
                 }
                 return;
@@ -1385,7 +1622,7 @@
         // -------------------------
         // Add message to UI
         // -------------------------
-        function addMessage(text, role) {
+        function addMessage(text, role, isMultiAgent = false) {
             // Filter out raw TextContent strings
             if (text.startsWith("[TextContent(")) {
                 console.log("Skipping raw ToolMessage:", text.substring(0, 50));
@@ -1398,6 +1635,12 @@
 
             const div = document.createElement("div");
             div.className = `msg ${role}`;
+
+            // Add multi-agent class if this was from multi-agent execution
+            if (role === "assistant" && isMultiAgent) {
+                div.className += " multi-agent";
+            }
+
             div.innerHTML = formatMessage(text);
             chat.appendChild(div);
 
@@ -1424,6 +1667,7 @@
             isProcessing = true;
             sendBtn.disabled = true;
             status.textContent = "Processing…";
+            lastResponseWasMultiAgent = false;
 
             ws.send(JSON.stringify({
                 type: "user",

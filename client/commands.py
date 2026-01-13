@@ -1,5 +1,5 @@
 """
-Shared Commands Module
+Shared Commands Module (WITH MULTI-AGENT COMMANDS - STATE SYNC FIXED)
 Handles command processing for both CLI and WebSocket
 """
 
@@ -10,12 +10,15 @@ def get_commands_list():
     """Get list of available commands"""
     return [
         ":commands - List all available commands",
+        ":clear history - Clear the chat history",
         ":tools - List all available tools",
         ":tool <tool> - Get the tool description",
         ":model - View the current active model",
         ":model <model> - Use the model passed",
         ":models - List available models",
-        ":clear history - Clear the chat history"
+        ":multi on - Enable multi-agent mode",
+        ":multi off - Disable multi-agent mode",
+        ":multi status - Check multi-agent status"
     ]
 
 
@@ -36,7 +39,7 @@ def get_tool_description(tools, tool_name):
 
 
 async def handle_command(query, tools, model_name, conversation_state, models_module, system_prompt, agent_ref=None,
-                         create_agent_fn=None, logger=None):
+                         create_agent_fn=None, logger=None, orchestrator=None, multi_agent_state=None):
     """
     Process a command starting with ':'
     Returns: (handled: bool, response: str, new_agent: object or None, new_model: str or None)
@@ -90,5 +93,65 @@ async def handle_command(query, tools, model_name, conversation_state, models_mo
             return True, "Chat history cleared.", None, None
         else:
             return True, f"Unknown clear target: {target}", None, None
+
+    # Multi-agent commands (update shared state dict)
+    if query == ":multi on":
+        if multi_agent_state is not None:
+            multi_agent_state["enabled"] = True
+            if logger:
+                logger.info(f"🎭 Multi-agent mode ENABLED (state dict updated: {multi_agent_state})")
+        else:
+            if logger:
+                logger.warning("⚠️ multi_agent_state is None, cannot enable")
+        return True, "🎭 Multi-agent mode ENABLED\nComplex queries will be broken down and executed by specialized agents.", None, None
+
+    if query == ":multi off":
+        if multi_agent_state is not None:
+            multi_agent_state["enabled"] = False
+            if logger:
+                logger.info(f"🤖 Multi-agent mode DISABLED (state dict updated: {multi_agent_state})")
+        else:
+            if logger:
+                logger.warning("⚠️ multi_agent_state is None, cannot disable")
+        return True, "🤖 Multi-agent mode DISABLED\nAll queries will use single-agent execution.", None, None
+
+    if query == ":multi status":
+        # Check actual state from the dict
+        if multi_agent_state is not None:
+            is_enabled = multi_agent_state.get("enabled", True)
+            if logger:
+                logger.info(f"📊 Status check - multi_agent_state: {multi_agent_state}")
+        else:
+            is_enabled = True
+            if logger:
+                logger.warning("⚠️ multi_agent_state is None, defaulting to enabled")
+
+        status = "ENABLED ✅" if is_enabled else "DISABLED ❌"
+        details = []
+        details.append(f"Multi-agent mode: {status}")
+        details.append("")
+
+        if orchestrator:
+            details.append("Multi-agent system is available and ready.")
+        else:
+            details.append("⚠️  Multi-agent system is NOT available.")
+            details.append("   Add multi_agent.py to client/ directory to enable.")
+            return True, "\n".join(details), None, None
+
+        details.append("")
+        details.append("When enabled, complex queries are automatically:")
+        details.append("  • Broken down into subtasks")
+        details.append("  • Assigned to specialized agents (Researcher, Coder, Analyst, Writer, Planner)")
+        details.append("  • Executed in parallel where possible")
+        details.append("  • Results are aggregated")
+        details.append("")
+        details.append("Examples of multi-agent queries:")
+        details.append("  • 'Research X, analyze Y, and write Z'")
+        details.append("  • 'Find A then compare with B'")
+        details.append("  • 'Gather data and create a report'")
+        details.append("")
+        details.append("Simple queries (weather, todos, search) use single-agent automatically.")
+
+        return True, "\n".join(details), None, None
 
     return False, None, None, None

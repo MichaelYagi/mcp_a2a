@@ -33,8 +33,9 @@ async def broadcast_message(message_type, data):
         )
 
 
-async def websocket_handler(websocket, agent_ref, tools, logger, conversation_state, run_agent_fn, models_module, model_name, system_prompt):
-    """Handle WebSocket connections for chat"""
+async def websocket_handler(websocket, agent_ref, tools, logger, conversation_state, run_agent_fn,
+                            models_module, model_name, system_prompt, orchestrator=None, multi_agent_state=None):
+    """Handle WebSocket connections for chat (WITH MULTI-AGENT STATE)"""
     CONNECTED_WEBSOCKETS.add(websocket)
 
     try:
@@ -140,12 +141,15 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
             if data.get("type") == "user" or "text" in data:
                 prompt = data.get("text")
 
-                # Handle commands
+                # Handle commands (WITH MULTI-AGENT STATE PASSING)
                 if prompt.startswith(":"):
                     handled, response, new_agent, new_model = await handle_command(
                         prompt, tools, model_name, conversation_state, models_module,
                         system_prompt, agent_ref=agent_ref,
-                        create_agent_fn=lambda llm, t: agent_ref[0].__class__(llm, t), logger=logger
+                        create_agent_fn=lambda llm, t: agent_ref[0].__class__(llm, t),
+                        logger=logger,
+                        orchestrator=orchestrator,  # ADDED
+                        multi_agent_state=multi_agent_state  # ADDED
                     )
 
                     if handled:
@@ -175,12 +179,19 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
         SYSTEM_MONITOR_CLIENTS.discard(websocket)
 
 
-async def start_websocket_server(agent, tools, logger, conversation_state, run_agent_fn, models_module, model_name, system_prompt, host="0.0.0.0", port=8765):
-    """Start the WebSocket server for chat"""
+async def start_websocket_server(agent, tools, logger, conversation_state, run_agent_fn, models_module,
+                                 model_name, system_prompt, orchestrator=None, multi_agent_state=None,
+                                 host="0.0.0.0", port=8765):
+    """Start the WebSocket server for chat (WITH MULTI-AGENT STATE)"""
 
     async def handler(websocket):
         try:
-            await websocket_handler(websocket, [agent], tools, logger, conversation_state, run_agent_fn, models_module, model_name, system_prompt)
+            await websocket_handler(
+                websocket, [agent], tools, logger, conversation_state, run_agent_fn,
+                models_module, model_name, system_prompt,
+                orchestrator=orchestrator,  # PASS THROUGH
+                multi_agent_state=multi_agent_state  # PASS THROUGH
+            )
         except websockets.exceptions.ConnectionClosed:
             pass
 
