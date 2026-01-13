@@ -1254,36 +1254,28 @@ def rag_status_tool() -> str:
 @mcp.tool()
 def plex_ingest_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> str:
     """
-    Ingest Plex media subtitles into RAG database in batches.
+    Ingest the NEXT unprocessed Plex items into RAG database.
+
+    IMPORTANT: This tool automatically skips already-processed items and finds
+    the next NEW items to ingest. The 'limit' refers to NEW items to process,
+    not total items to check.
 
     Args:
-        limit (int, optional): Number of items to process in this batch (default: 5)
+        limit (int, optional): Number of NEW items to ingest (default: 5)
+                              The tool will check as many items as needed to find this many new ones.
         rescan_no_subtitles (bool, optional): If True, re-check items that previously had no subtitles.
-                                             Use this if you've added subtitle files to your media. (default: False)
+                                             Use this if you've added subtitle files. (default: False)
 
     Returns:
         JSON string with:
-        - ingested: Array of successfully ingested items with details:
-          - title: Movie/episode title
-          - id: Plex ratingKey
-          - subtitle_chunks: Number of text chunks added
-          - subtitle_word_count: Approximate words from subtitles
-        - skipped: Array of items skipped:
-          - title: Movie/episode title
-          - id: Plex ratingKey
-          - reason: Why it was skipped ("Already ingested with subtitles" or "No subtitles found")
-        - stats: Overall statistics:
-          - total_items: Total items in Plex library
-          - successfully_ingested: Items with subtitles in RAG
-          - missing_subtitles: Items without subtitles
-          - remaining_unprocessed: Items not yet checked
-        - items_processed: Number of items examined in this batch
-        - error: Error message if something went wrong
+        - ingested: Array of successfully ingested NEW items
+        - skipped: Array of NEW items that were skipped (no subtitles)
+        - stats: Overall library statistics
+        - items_processed: Number of NEW items processed in this batch
+        - items_checked: Total items examined (including already-processed ones)
 
-    Processes subtitle files for movies/TV shows and adds them to the vector database.
-    Shows clear statistics about what's in RAG vs what's missing subtitles.
-
-    Use rescan_no_subtitles=True if you've added subtitle files and want to re-check previously skipped items.
+    Example: If you have 5 items already ingested and call this with limit=10,
+    it will skip those 5 and ingest the next 10 NEW items.
     """
     logger.info(f"🛠 [server] plex_ingest_batch called with limit: {limit}, rescan: {rescan_no_subtitles}")
     result = ingest_next_batch(limit, rescan_no_subtitles)

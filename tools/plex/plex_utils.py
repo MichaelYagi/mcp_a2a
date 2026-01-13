@@ -187,13 +187,13 @@ def parse_srt(content: str) -> List[str]:
     return lines
 
 
-def chunk_stream(lines: Iterator[str], chunk_size: int = 1500) -> Iterator[str]:
+def chunk_stream(lines: Iterator[str], chunk_size: int = 1600) -> Iterator[str]:
     """
     Chunk text lines into larger blocks by character count.
 
     Args:
         lines: Iterator of text lines
-        chunk_size: Maximum characters per chunk (default: 1500)
+        chunk_size: Maximum characters per chunk (default: 4000)
 
     Yields:
         Text chunks

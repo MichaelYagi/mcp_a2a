@@ -1003,6 +1003,9 @@ def create_langgraph_agent(llm_with_tools, tools):
                     f"• Successfully in RAG: **{stats.get('successfully_ingested', 0)}** items with subtitles",
                     f"• Missing subtitles: **{stats.get('missing_subtitles', 0)}** items",
                     f"• Not yet processed: **{stats.get('remaining_unprocessed', 0)}** items",
+                    f"\n📝 **This Batch:**",
+                    f"• Items checked: {result.get('items_checked', 0)}",
+                    f"• New items processed: {result.get('items_processed', 0)}",
                     f"\n💡 Use `rescan_no_subtitles=True` to re-check items that were missing subtitles."
                 ])
 

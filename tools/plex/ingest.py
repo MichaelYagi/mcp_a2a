@@ -45,7 +45,7 @@ def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> Dict
     Ingest the next batch of unprocessed Plex items into RAG.
 
     Args:
-        limit: Maximum number of items to process
+        limit: Maximum number of NEW items to process (not just check)
         rescan_no_subtitles: If True, re-check items that previously had no subtitles
 
     Returns:
@@ -54,30 +54,25 @@ def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> Dict
     try:
         ingested_items = []
         skipped_items = []
-        processed_count = 0
+        processed_count = 0  # Count of NEW items processed
+        checked_count = 0  # Total items examined
 
         logger.info(f"📥 Starting batch ingestion (limit: {limit}, rescan: {rescan_no_subtitles})")
 
         # Stream through all media
         for media_item in stream_all_media():
-            if processed_count >= limit:
-                break
-
             media_id = str(media_item["id"])
             title = media_item["title"]
 
             # Check if already ingested
             if check_if_ingested(media_id, skip_no_subtitles=rescan_no_subtitles):
-                logger.info(f"⏭️  Skipping (already ingested): {title}")
-                skipped_items.append({
-                    "title": title,
-                    "id": media_id,
-                    "reason": "Already ingested with subtitles"
-                })
-                processed_count += 1
+                checked_count += 1
+                logger.debug(f"⏭️  [{checked_count}] Already processed: {title}")
+                # Don't count as processed - we want NEW items only
                 continue
 
-            logger.info(f"📥 Processing: {title}")
+            # This is a NEW item to process
+            logger.info(f"📥 [{checked_count + 1}] Processing: {title}")
 
             # Get metadata
             metadata_text = extract_metadata(media_item)
@@ -94,37 +89,39 @@ def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> Dict
                 })
                 mark_as_ingested(media_id, status="no_subtitles")
                 processed_count += 1
+
+                # Check if we hit limit
+                if processed_count >= limit:
+                    logger.info(f"✅ Reached limit of {limit} new items processed")
+                    break
                 continue
-
-            # Combine metadata + subtitles
-            full_text = f"{metadata_text}\n\nSubtitles:\n" + "\n".join(subtitle_lines)
-
-            # Count words for feedback
-            word_count = len(full_text.split())
 
             # Chunk and add to RAG
             chunks_added = 0
-            for chunk in chunk_stream(iter(subtitle_lines), chunk_size=1500):
-                # Don't prepend metadata to every chunk - it's redundant and causes size issues
-                # Instead, store metadata once and reference via source
-                rag_add(
-                    text=chunk,  # Just the subtitle text
-                    source=f"plex:{media_id}:{title}",  # Include title in source for reference
-                    chunk_size=1500
-                )
-                chunks_added += 1
+            word_count = 0
 
-            # Store metadata separately once (not in every chunk)
-            # Add a single metadata chunk for this item
+            for chunk in chunk_stream(iter(subtitle_lines), chunk_size=1600):
+                # Just the subtitle text - DON'T save yet
+                result = rag_add(
+                    text=chunk,
+                    source=f"plex:{media_id}:{title}",
+                    chunk_size=400
+                )
+                if result.get("success"):
+                    chunks_added += result.get("chunks_added", 0)
+                    word_count += len(chunk.split())
+
+            # Store metadata separately
             metadata_summary = f"{title} - {metadata_text}"
-            if len(metadata_summary) < 1500:  # Only if it fits
+            if len(metadata_summary) < 1600:
                 try:
-                    rag_add(
+                    result = rag_add(
                         text=metadata_summary,
                         source=f"plex:{media_id}:metadata",
-                        chunk_size=1500
+                        chunk_size=400
                     )
-                    chunks_added += 1
+                    if result.get("success"):
+                        chunks_added += result.get("chunks_added", 0)
                 except Exception as e:
                     logger.warning(f"⚠️  Could not add metadata chunk: {e}")
 
@@ -140,6 +137,11 @@ def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> Dict
             logger.info(f"✅ Ingested: {title} ({chunks_added} chunks, ~{word_count} words)")
             processed_count += 1
 
+            # Check if we hit limit
+            if processed_count >= limit:
+                logger.info(f"✅ Reached limit of {limit} new items processed")
+                break
+
         # Get total stats
         stats = get_ingestion_stats()
 
@@ -152,10 +154,16 @@ def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> Dict
                 "missing_subtitles": stats["missing_subtitles"],
                 "remaining_unprocessed": stats["remaining"]
             },
-            "items_processed": processed_count
+            "items_processed": processed_count,
+            "items_checked": checked_count + processed_count  # Total examined
         }
 
-        logger.info(f"📊 Batch complete: {len(ingested_items)} ingested, {len(skipped_items)} skipped")
+        logger.info(f"📊 Batch complete:")
+        logger.info(f"   - Checked: {checked_count + processed_count} items")
+        logger.info(f"   - New items processed: {processed_count}")
+        logger.info(f"   - Ingested: {len(ingested_items)}")
+        logger.info(f"   - Skipped: {len(skipped_items)}")
+
         return result
 
     except Exception as e:
