@@ -4,6 +4,12 @@
                   │
                   ▼
        ┌──────────────────────┐
+       │  INTENT FILTERING    │
+       │ (reduce tool count)  │
+       └───────┬──────────────┘
+               │
+               ▼
+       ┌──────────────────────┐
        │  DOES LLM WANT A     │
        │     TOOL CALL?       │
        └───────┬──────────────┘
@@ -16,7 +22,14 @@
                │
                ▼
        ┌──────────────────────┐
-       │   SEND TO MCP CLIENT │
+       │   ROUTER CHECK       │
+       │ (tool calls first)   │
+       └───────┬──────────────┘
+               │
+               ▼
+       ┌──────────────────────┐
+       │   TOOLNODE EXEC      │
+       │ (LangGraph built-in) │
        └───────┬──────────────┘
                │
                ▼
@@ -45,4 +58,4 @@
                      │   FINALIZE    │
                      └───────────────┘
 
-* LLM → Tool → Result → LLM → Repeat → Finalize
+* Intent Filter → LLM → Router → ToolNode → MCP Server → Result → LLM → Repeat → Finalize

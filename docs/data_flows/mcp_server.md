@@ -13,7 +13,7 @@
             ▼                     ▼                     ▼
 
     ┌────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-    │  Embedding     │     │   Vector Search  │     │   Plex Metadata  │
+    │  RAG Search    │     │   Plex Ingest    │     │   Weather API    │
     │   Tool         │     │     Tool         │     │      Tool        │
     └────────────────┘     └──────────────────┘     └──────────────────┘
              │                     │                     │
@@ -21,43 +21,29 @@
              ▼                     ▼                     ▼
 
     ┌────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-    │  bge-large     │     │ LanceDB / RAG    │     │  Local Library   │
-    │  CPU Embedding │     │ Similarity Query │     │  Movie Metadata  │
+    │  bge-large     │     │ Plex Library     │     │  External API    │
+    │  Embedding     │     │ Subtitle Extract │     │                  │
     └────────────────┘     └──────────────────┘     └──────────────────┘
+             │                     │
+             ▼                     ▼
+    ┌────────────────┐     ┌──────────────────┐
+    │  LanceDB       │     │  Media Metadata  │
+    │  Vector Search │     │                  │
+    └────────────────┘     └──────────────────┘
 
 
             ┌──────────────────────────────────────────────────────────┐
             │                        LOGGING                           │
-            │      (WebSocket stream of server + tool events)          │
+            │         (WebSocket stream of server events)              │
             └──────────────────────────────────────────────────────────┘
 
 
             ┌──────────────────────────────────────────────────────────┐
             │                        METRICS                           │
-            │   (CPU/GPU/RAM monitoring streamed to your Web UI)       │
+            │       (CPU/GPU/RAM monitoring via WebSocket)             │
             └──────────────────────────────────────────────────────────┘
 
-
-            ┌──────────────────────────────────────────────────────────┐
-            │                        FILE OPS                          │
-            │   (read/write, ingest, chunking, indexing)               │
-            └──────────────────────────────────────────────────────────┘
-
-## How this graph behaves inside the agent system:
-The MCP server is the tool layer.
-
-The graph above shows:
-* Nodes = tools or subsystems
-* Edges = how tools are exposed to the MCP client
-* Top-level node = the MCP server itself
-
-The LangGraph agent sees this graph as a capability map.
-
-When the agent needs to:
-* embed text → it calls the Embedding Tool
-* search your library → it calls the Vector Search Tool
-* fetch movie info → it calls the Plex Metadata Tool
-* stream logs → it connects to the Logging WebSocket
-* monitor system load → it connects to the Metrics WebSocket
-
-The MCP server is the structured interface that exposes all of these nodes.
+* MCP Server exposes tools to client
+* Tools execute specialized functions
+* Results return to agent via MCP Client
+* Logs and metrics stream to Web UI

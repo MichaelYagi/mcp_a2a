@@ -1,41 +1,47 @@
                          ┌──────────────────────────┐
                          │        MCP CLIENT        │
-                         │ (Protocol + Tool Bridge) │
+                         │ (Bridge + Tool Registry) │
                          └─────────────┬────────────┘
                                        │
                                        │ connects to
                                        ▼
                          ┌──────────────────────────┐
-                         │       MCP SERVER(S)      │
-                         │   (Tool Providers)       │
+                         │       MCP SERVER         │
+                         │   (Tool Provider)        │
                          └─────────────┬────────────┘
                                        │
-                                       │ registers tools with
+                                       │ registers tools
                                        ▼
         ┌───────────────────────────────────────────────────────────┐
         │                    CLIENT TOOL REGISTRY                   │
-        │ (Local representation of all MCP tools available to agent)│
+        │           (local representation of MCP tools)             │
         └───────────────────────────────────────────────────────────┘
                                        │
                                        │ provides tools to
                                        ▼
 
         ┌───────────────────────────────────────────────────────────┐
-        │                     LANGGRAPH AGENT                       │
-        │   (Reasoning, Planning, Tool-Orchestration, State Flow)   │
+        │                     EXECUTION MODE                        │
+        │           (Single-Agent or Multi-Agent)                   │
         └───────────────────────────────────────────────────────────┘
-            │                     │                     │
-            │ decides             │ loops/branches      │ finalizes
-            ▼                     ▼                     ▼
-
-    ┌────────────────┐     ┌──────────────────┐     ┌──────────────────┐ 
-    │  Tool Call     │     │  State Update    │     │  LLM Reasoning   │
-    │  Node          │     │  Node            │     │  Node            │
-    └────────────────┘     └──────────────────┘     └──────────────────┘
-            │                     │                     │
-            │ invokes             │ stores              │ interprets
-            ▼                     ▼                     ▼
-
+            │                                         │
+            │ Single                                  │ Multi
+            ▼                                         ▼
+    ┌────────────────┐                     ┌──────────────────────┐
+    │  LANGGRAPH     │                     │  MULTI-AGENT         │
+    │  AGENT         │                     │  ORCHESTRATOR        │
+    │                │                     │                      │
+    │  Intent Filter │                     │  Task Decomposition  │
+    │  LLM Reasoning │                     │  Specialized Agents  │
+    │  Router        │                     │  Parallel Execution  │
+    │  ToolNode      │                     │  Result Synthesis    │
+    │  Finalizer     │                     │                      │
+    └────────┬───────┘                     └──────────┬───────────┘
+             │                                        │
+             │ both invoke tools via                  │
+             └────────────────┬───────────────────────┘
+                              │
+                              ▼
         ┌───────────────────────────────────────────────────────────┐
         │                     MCP CLIENT API                        │
         │ (send tool calls, receive results, stream logs/metrics)   │
@@ -49,23 +55,8 @@
                          │ (Chat, Logs, Metrics)    │
                          └──────────────────────────┘
 
-### LangGraph is part of the client’s reasoning layer
-* It’s not “next to” the client — it lives inside the client as the agent brain.
-
-### The MCP client provides tools to LangGraph
-* The client discovers tools → registers them → LangGraph uses them.
-
-### The agent is the combination of:
-* LangGraph (flow + state machine)
-* LLM (reasoning engine)
-* MCP tools (actions)
-
-### The Web UI is downstream
-It only displays:
-
-* messages 
-* tool results 
-* logs 
-* metrics
-
-It doesn’t decide anything.
+* MCP Client bridges Web UI and execution modes
+* Single-agent: LangGraph state machine
+* Multi-agent: Orchestrator + specialized agents
+* Both modes use same MCP Server tools
+* Results stream to Web UI

@@ -1,128 +1,98 @@
     ┌──────────────────────────────────────────────────────────────────────────┐
     │                                WEB UI                                    │
-    │     (Chat, Streaming Output, Logs Panel, Metrics Panel)                  │
+    │          (Chat, Logs, Metrics, Multi-Agent Toggle)                       │
     └───────────────────────────────┬──────────────────────────────────────────┘
                                     │  WebSocket / HTTP
                                     ▼
     ┌──────────────────────────────────────────────────────────────────────────┐
     │                               MCP CLIENT                                 │
-    │   (Protocol, Tool Registry, Transport, Bridges UI ↔ Agent ↔ MCP Server)  │
+    │              (Bridge between UI ↔ Agent ↔ MCP Server)                    │
     └───────────────┬──────────────────────────────────────────────────────────┘
                     │ registers tools with
                     ▼
     ┌──────────────────────────────────────────────────────────────────────────┐
     │                         CLIENT TOOL REGISTRY                             │
-    │   (Local representation of all MCP tools exposed by the server)          │
+    │              (Local representation of MCP tools)                         │
     └───────────────┬──────────────────────────────────────────────────────────┘
                     │ provides tools to
                     ▼
     ┌──────────────────────────────────────────────────────────────────────────┐
-    │                            LANGGRAPH AGENT                               │
-    │   (Reasoning, Planning, State Machine, Tool-Orchestration, Memory Flow)  │
+    │                          EXECUTION MODE                                  │
+    │           (Single-Agent or Multi-Agent based on query)                   │
     └───────────────┬──────────────────────────────────────────────────────────┘
-                    │ decides next step
+                    │
+        ┌───────────┴────────────┐
+        │                        │
+        ▼                        ▼
+    ┌─────────────────┐   ┌──────────────────────────────────────┐
+    │  SINGLE-AGENT   │   │        MULTI-AGENT                   │
+    │  (LangGraph)    │   │     (Orchestrator + Agents)          │
+    └────────┬────────┘   └─────────┬────────────────────────────┘
+             │                      │
+             │                      │ creates plan
+             │                      ▼
+             │            ┌──────────────────────────┐
+             │            │  Task Decomposition      │
+             │            │  (Orchestrator)          │
+             │            └─────────┬────────────────┘
+             │                      │
+             │                      │ executes in parallel
+             │                      ▼
+             │            ┌──────────────────────────────────────┐
+             │            │    Specialized Agents                │
+             │            │  (Researcher, Coder, Analyst,        │
+             │            │   Writer, Planner, Plex Ingester)    │
+             │            └─────────┬────────────────────────────┘
+             │                      │
+             │                      │ aggregate results
+             │                      ▼
+             │            ┌──────────────────────────┐
+             │            │  Final Synthesis         │
+             │            │  (Orchestrator)          │
+             │            └─────────┬────────────────┘
+             │                      │
+             └──────────────────────┘
+                          │
+                          ▼
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │                            AGENT NODES                                   │
+    │         (Intent Filter → LLM → Router → ToolNode → LLM)                  │
+    └───────────────┬──────────────────────────────────────────────────────────┘
+                    │ invokes tools via
                     ▼
-        ┌────────────────────────────────────────────────────────┐
-        │                    AGENT NODES                         │
-        └────────────────────────────────────────────────────────┘
-                │                     │                     │
-                │                     │                     │
-                ▼                     ▼                     ▼
-       ┌──────────────────┐   ┌────────────────────┐   ┌────────────────────┐
-       │  LLM Reasoning   │   │  Tool Call Node    │   │  State Update Node │
-       │  (llama3.1:8b)   │   │  (MCP invocation)  │   │  (Graph memory)    │
-       └──────────────────┘   └────────────────────┘   └────────────────────┘
-                │                     │
-                │                     │ invokes
-                │                     ▼
-                │        ┌──────────────────────────────────────────────┐
-                │        │                 MCP CLIENT API               │
-                │        │ (send tool calls, receive results, streams)  │
-                │        └──────────────────────────────────────────────┘
-                │                     │
-                │                     │ forwards to
-                ▼                     ▼
     ┌──────────────────────────────────────────────────────────────────────────┐
     │                               MCP SERVER                                 │
-    │        (Tool Provider Layer: RAG, Embeddings, Search, Metadata, etc.)    │
+    │            (Tool Provider: RAG, Plex, Weather, System)                   │
     └───────────────┬──────────────────────────────────────────────────────────┘
-                    │ exposes tools
+                    │ exposes
                     ▼
     ┌──────────────────────────────────────────────────────────────────────────┐
     │                                   TOOLS                                  │
     └──────────────────────────────────────────────────────────────────────────┘
-           │                     │                        │                 │
-           ▼                     ▼                        ▼                 ▼
-
-    ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
-    │ Embedding Tool   │   │ Vector Search    │   │ Plex Metadata    │   │ File Ops Tool    │
-    │ (bge-large CPU)  │   │ (LanceDB RAG)    │   │ (Local Library)  │   │ (Read/Write)     │
-    └──────────────────┘   └──────────────────┘   └──────────────────┘   └──────────────────┘
            │                     │                        │
-           │ uses                │ queries                │ fetches
            ▼                     ▼                        ▼
 
     ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
-    │ Embedding Model  │   │ Vector Database  │   │ Movie Metadata DB│
-    │ (bge-large CPU)  │   │ (LanceDB)        │   │ (Your Plex data) │
+    │ RAG Search       │   │ Plex Ingestion   │   │ Weather API      │
+    │ (bge-large)      │   │ (Subtitle/Meta)  │   │                  │
     └──────────────────┘   └──────────────────┘   └──────────────────┘
+           │                     │
+           │ queries             │ fetches
+           ▼                     ▼
+
+    ┌──────────────────┐   ┌──────────────────┐
+    │ Vector Database  │   │ Plex Library     │
+    │ (LanceDB)        │   │ (Media Server)   │
+    └──────────────────┘   └──────────────────┘
 
 
     ┌──────────────────────────────────────────────────────────────────────────┐
-    │                             LOGS STREAM (WS)                             │
-    │     (Server logs, tool logs, agent logs streamed to Web UI)              │
+    │                         WEBSOCKET STREAMS                                │
+    │              (Logs, Metrics, System Monitor)                             │
     └──────────────────────────────────────────────────────────────────────────┘
 
-    ┌──────────────────────────────────────────────────────────────────────────┐
-    │                           METRICS STREAM (WS)                            │
-    │     (CPU %, GPU %, VRAM, RAM, temps streamed to Web UI)                  │
-    └──────────────────────────────────────────────────────────────────────────┘
-
-
-### The Web UI is the user-facing layer
-It receives:
-
-* chat output
-* tool results
-* logs
-* metrics
-
-### The MCP Client is the bridge
-It:
-
-* connects to the MCP server
-* registers tools
-* exposes them to LangGraph
-* streams logs + metrics
-
-### LangGraph is the agent brain
-It:
-
-* interprets user intent
-* decides which tool to call
-* loops until done
-* maintains state
-* orchestrates everything
-
-### The LLM is the reasoning engine
-It:
-
-* thinks
-* plans
-* interprets tool results
-* generates final answers
-
-### The MCP Server is the toolbox
-It provides:
-
-* embeddings
-* vector search
-* metadata
-* file ops
-* logs
-* metrics
-
-### The Vector DB + Embedding Model power RAG
-* bge-large runs on GPU
-* LanceDB stores your movie embeddings
-* RAG retrieval feeds context to the LLM
+* Web UI controls execution mode via toggle
+* Single-agent: Direct LangGraph execution
+* Multi-agent: Orchestrator → Specialized agents → Parallel execution → Synthesis
+* Both modes use same MCP Server tools
+* Results stream back to Web UI

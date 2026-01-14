@@ -1,30 +1,41 @@
     ┌──────────────────────────────────────────────┐
     │               LANGGRAPH AGENT                │
-    │     (Reasoning, Planning, Tool Use)          │
+    │        (State Machine + Tool Router)         │
     └───────────────────────┬──────────────────────┘
                             │
                             ▼
                  ┌──────────────────────┐
-                 │   LLM REASONING      │
-                 │ (Interpret Intent)   │
+                 │   INTENT FILTERING   │
+                 │ (reduce tool count)  │
                  └───────────┬──────────┘
                              │
-                             │ decides next action
+                             ▼
+                 ┌──────────────────────┐
+                 │   LLM REASONING      │
+                 │ (decide tool calls)  │
+                 └───────────┬──────────┘
+                             │
+                             │ has tool calls?
                              ▼
              ┌──────────────────────────────┬─────────────────────────────┐
              │                              │                             │
              ▼                              ▼                             ▼
     ┌──────────────────┐        ┌────────────────────┐        ┌────────────────────┐
-    │  ROUTER NODE     │        │  TOOL CALL NODE    │        │  FINALIZER NODE    │
-    │ (Choose branch)  │        │ (Invoke MCP tool)  │        │ (Produce answer)   │
+    │  ROUTER NODE     │        │  TOOLNODE          │        │  FINALIZER NODE    │
+    │ (tool calls      │        │ (invoke MCP tools) │        │ (produce answer)   │
+    │  priority first) │        │                    │        │                    │
     └─────────┬────────┘        └──────────┬─────────┘        └───────────┬────────┘
               │                            │                              │
-              │                            ▼                              │
-              │                 ┌──────────────────────────┐              │
-              │                 │   MCP CLIENT API         │              │
-              │                 │ (send/receive tool calls)│              │
-              │                 └───────────┬──────────────┘              │
-              │                             │                             │
-              └─────────────────────────────┴─────────────────────────────┘
+              │ routes to tools            │                              │
+              └────────────────────────────┤                              │
+                                           │                              │
+                                           ▼                              │
+                                ┌──────────────────────────┐              │
+                                │   MCP CLIENT API         │              │
+                                │ (execute tool via server)│              │
+                                └───────────┬──────────────┘              │
+                                            │                             │
+                                            │ result back to LLM          │
+                                            └─────────────────────────────┘
 
-* LLM → Router → Tool Calls → LLM → Finalizer
+* Intent Filter → LLM → Router (tool calls first) → ToolNode → MCP Server → Result → LLM → Loop or Finalize

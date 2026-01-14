@@ -1,86 +1,98 @@
     ┌──────────────────────────────────────────────────────────────┐
     │                           USER QUERY                         │
-    │                 (text typed into your Web UI)                │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
     │                           WEB UI                             │
-    │         (sends raw text to MCP Client over WS/HTTP)          │
+    │                  (WebSocket to MCP Client)                   │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
     │                         MCP CLIENT                           │
-    │     (forwards user message into LangGraph agent state)       │
+    │            (forwards to LangGraph agent state)               │
+    └───────────────────────────────┬──────────────────────────────┘
+                                    │
+                                    ▼
+    ┌──────────────────────────────────────────────────────────────┐
+    │                       INTENT FILTERING                       │
+    │              (reduce tools based on query type)              │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
     │                       LANGGRAPH AGENT                        │
-    │     (LLM decides whether to call RAG, tools, or answer)      │
+    │           (LLM decides tool calls or final answer)           │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
-                                    │ if RAG needed
+                                    │ if tool needed
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
-    │                     QUERY EMBEDDING (bge-large)              │
-    │     MCP tool call → bge-large → 1024d embedding vector       │
+    │                          ROUTER                              │
+    │              (check for tool calls first)                    │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
-    │                     VECTOR SEARCH (LanceDB)                  │
-    │   input: query vector → cosine similarity → top-k matches    │
+    │                         TOOLNODE                             │
+    │                  (execute MCP tool call)                     │
+    └───────────────────────────────┬──────────────────────────────┘
+                                    │
+                                    ▼
+    ┌──────────────────────────────────────────────────────────────┐
+    │                       MCP SERVER                             │
+    │                  (execute tool function)                     │
+    └───────────────────────────────┬──────────────────────────────┘
+                                    │
+                                    │ if RAG tool
+                                    ▼
+    ┌──────────────────────────────────────────────────────────────┐
+    │                     QUERY EMBEDDING                          │
+    │               (bge-large → 1024d vector)                     │
+    └───────────────────────────────┬──────────────────────────────┘
+                                    │
+                                    ▼
+    ┌──────────────────────────────────────────────────────────────┐
+    │                     VECTOR SEARCH                            │
+    │           (LanceDB cosine similarity → top-k)                │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
     │                     RETRIEVED CONTEXT                        │
-    │   (movie summaries, metadata, chunks, descriptions, etc.)    │
+    │               (chunks, metadata, summaries)                  │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
-    │                     CONTEXT PACKAGING                        │
-    │   (LangGraph merges retrieved text into LLM input prompt)    │
+    │                     TOOL RESULT                              │
+    │              (returned to LangGraph agent)                   │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
-    │                     LLM ANSWER (Llama 3.1 8B)                │
-    │   (reasoning + synthesis using retrieved context)            │
+    │                     LLM REASONING                            │
+    │              (process results, decide next step)             │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
+                                    │ loop or finalize
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
-    │                     LANGGRAPH FINALIZER                      │
-    │   (formats final answer, updates state, returns output)      │
+    │                     FINAL ANSWER                             │
+    │              (formatted response to user)                    │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
     │                         MCP CLIENT                           │
-    │   (streams final answer + logs + metrics back to UI)         │
+    │             (stream answer + logs + metrics)                 │
     └───────────────────────────────┬──────────────────────────────┘
                                     │
                                     ▼
     ┌──────────────────────────────────────────────────────────────┐
     │                           WEB UI                             │
-    │                 (renders final answer to user)               │
+    │                    (render to user)                          │
     └──────────────────────────────────────────────────────────────┘
 
-**This diagram is for understanding:**
-
-* where performance bottlenecks can occur
-* where embeddings matter
-* how RAG interacts with LangGraph
-* how the MCP client/server moves data
-* how the LLM consumes retrieved context
-
-**This diagram shows pure data movement, not logic**
-
-* where text becomes vectors
-* where vectors become search results
-* where search results become LLM context
-* where LLM output becomes the final answer
+* User → Web UI → Client → Intent Filter → LangGraph → Router → ToolNode → MCP Server → RAG (if needed) → Result → LLM → Final Answer → Client → Web UI

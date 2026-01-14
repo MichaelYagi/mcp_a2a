@@ -5,7 +5,7 @@
                             ▼
                  ┌──────────────────────┐
                  │   QUERY EMBEDDING    │
-                 │   (bge-large GPU)    │
+                 │   (bge-large)        │
                  └──────────┬───────────┘
                             │
                             ▼
@@ -17,19 +17,19 @@
                             ▼
                  ┌──────────────────────┐
                  │  TOP-K RETRIEVAL     │
-                 │ (movie chunks/meta)  │
+                 │ (chunks + metadata)  │
                  └──────────┬───────────┘
                             │
                             ▼
                  ┌──────────────────────┐
                  │  CONTEXT PACKAGING   │
-                 │  (merge + format)    │
+                 │  (format for LLM)    │
                  └──────────┬───────────┘
                             │
                             ▼
                  ┌──────────────────────┐
                  │   LLM ANSWER GEN     │
-                 │  (llama3.1:8b GPU)   │
+                 │  (with context)      │
                  └──────────────────────┘
 
-* Embed → Search → Retrieve → Feed to LLM
+* Embed → Search → Retrieve → Package → Feed to LLM

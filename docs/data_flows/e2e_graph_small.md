@@ -1,12 +1,23 @@
     USER
     │
     ▼
-    WEB UI  ───────►  MCP CLIENT  ───────►  LANGGRAPH AGENT/LLM
+    WEB UI  ───────►  MCP CLIENT  ───────►  EXECUTION MODE
+                                              │
+                                    ┌─────────┴─────────┐
+                                    │                   │
+                                    ▼                   ▼
+                            SINGLE-AGENT        MULTI-AGENT
+                            (LangGraph)         (Orchestrator)
+                                    │                   │
+                                    │                   │ specialized agents
+                                    │                   │ (parallel execution)
+                                    │                   │
+                                    └─────────┬─────────┘
                                               │
                                               │ calls tools
                                               ▼
                                            MCP SERVER
 
-* MCP server graph is the action space of the agent.
-* LangGraph pipeline decides which node to activate.
-* LLM is the reasoning engine inside the LangGraph agent.
+* Single-agent: LangGraph handles entire query
+* Multi-agent: Orchestrator breaks down query → Specialized agents execute → Synthesis
+* Both use MCP Server tools
