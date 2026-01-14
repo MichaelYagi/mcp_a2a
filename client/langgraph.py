@@ -53,6 +53,13 @@ def router(state):
     logger = logging.getLogger("mcp_client")
     logger.info(f"🎯 Router: Last message type = {type(last_message).__name__}")
 
+    # If LLM made tool calls, execute them first
+    if isinstance(last_message, AIMessage):
+        tool_calls = getattr(last_message, "tool_calls", [])
+        if tool_calls and len(tool_calls) > 0:
+            logger.info(f"🎯 Router: Found {len(tool_calls)} tool calls - routing to TOOLS")
+            return "tools"
+
     # Check if we just completed an ingest operation
     ingest_completed = state.get("ingest_completed", False)
 
@@ -73,9 +80,25 @@ def router(state):
             if any(stop_word in content for stop_word in ["stop", "then stop", "don't continue", "don't go on"]):
                 logger.info(f"🎯 Router: User requested ONE-TIME ingest - routing there")
                 return "ingest"
+
+            # Check if this is a multi-step query
+            # Multi-step indicators: "and then", "then", "first...then", etc.
+            multi_step_indicators = [
+                " and then ", " then ", " after that ", " next ",
+                "first", "research.*analyze", "find.*summarize",
+                "analyze", "create", "summary", "report"
+            ]
+
+            import re
+            has_multiple_steps = any(re.search(indicator, content.lower()) for indicator in multi_step_indicators)
+
+            if has_multiple_steps:
+                logger.info(f"🎯 Router: INGEST detected with multiple steps - using MULTI-AGENT")
+                return "continue"  # Let normal flow handle multi-agent
             else:
-                logger.info(f"🎯 Router: User requested INGEST - routing there")
-                return "ingest"
+                logger.info(f"🎯 Router: User requested INGEST (simple) - routing there")
+                return "ingest"  # Simple ingest, use single-agent
+
         elif "ingest" in content and ingest_completed:
             logger.info(f"🎯 Router: Ingest already completed - skipping to END")
             return "continue"
@@ -415,6 +438,21 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
         logger.info("🎯 Detected RAG SEARCH intent")
         return [t for t in all_tools if t.name in [
             "rag_search_tool", "search_entries", "search_semantic", "search_by_tag"
+        ]]
+
+    # PLEX INGESTION keywords
+    ingest_keywords = [
+        "ingest", "ingest from plex", "ingest plex", "process subtitles",
+        "add to rag", "ingest items", "ingest next", "ingest from my plex",
+        "process plex", "add plex to rag"
+    ]
+
+    if any(keyword in user_message_lower for keyword in ingest_keywords):
+        logger.info("🎯 Detected PLEX INGEST intent")
+        return [t for t in all_tools if t.name in [
+            "plex_find_unprocessed", "plex_ingest_items",
+            "plex_ingest_single", "plex_ingest_batch",
+            "plex_get_stats", "rag_search_tool",
         ]]
 
     # Media/Plex keywords

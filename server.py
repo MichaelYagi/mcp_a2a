@@ -107,7 +107,7 @@ from tools.rag.rag_diagnose import diagnose_rag
 # ─────────────────────────────────────────────
 from tools.plex.semantic_media_search import semantic_media_search
 from tools.plex.scene_locator import scene_locator
-from tools.plex.ingest import ingest_next_batch
+from tools.plex.ingest import ingest_next_batch, ingest_item_to_rag, extract_subtitles_for_item, ingest_batch_parallel_conservative, find_unprocessed_items
 
 mcp = FastMCP("MCP server")
 
@@ -1402,6 +1402,317 @@ def find_scene_by_title(movie_title: str, scene_query: str, limit: int = 5):
         "media_id": media_id,
         "scenes": scenes
     }
+
+# TOOL 1: Find Unprocessed Items (Discovery Phase)
+@mcp.tool()
+def plex_find_unprocessed(limit: int = 5, rescan_no_subtitles: bool = False) -> str:
+    """
+    Find unprocessed Plex items that need ingestion.
+
+    This is STEP 1 of the ingestion workflow. Use this to discover which items
+    need to be processed. Returns a list of item IDs that can be processed in
+    parallel by other agents.
+
+    Args:
+        limit: Maximum number of unprocessed items to find (default: 5)
+        rescan_no_subtitles: Re-check items that previously had no subtitles (default: False)
+
+    Returns:
+        JSON with:
+        - found_count: Number of items found
+        - items: Array of {id, title, type} for each unprocessed item
+
+    Example Response:
+        {
+          "found_count": 3,
+          "items": [
+            {"id": "12345", "title": "Zootopia (2016)", "type": "movie"},
+            {"id": "12346", "title": "Avatar (2009)", "type": "movie"}
+          ]
+        }
+
+    Multi-Agent Usage:
+        Orchestrator uses this as Task 1, then creates parallel tasks for items found.
+    """
+    logger.info(f"🔍 [TOOL] plex_find_unprocessed called (limit: {limit})")
+
+    try:
+        items = find_unprocessed_items(limit, rescan_no_subtitles)
+
+        # Simplify for multi-agent consumption
+        simplified = [
+            {
+                "id": str(item["id"]),
+                "title": item.get("title", "Unknown"),
+                "type": item.get("type", "unknown")
+            }
+            for item in items
+        ]
+
+        result = {
+            "found_count": len(simplified),
+            "items": simplified,
+            "message": f"Found {len(simplified)} unprocessed items ready for ingestion"
+        }
+
+        logger.info(f"✅ [TOOL] Found {len(simplified)} unprocessed items")
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        logger.error(f"❌ [TOOL] plex_find_unprocessed failed: {e}")
+        return json.dumps({"error": str(e), "found_count": 0, "items": []})
+
+# TOOL 2: Ingest Multiple Items in Parallel (Batch Processing)
+@mcp.tool()
+async def plex_ingest_items(item_ids: str) -> str:
+    """
+    Ingest multiple Plex items in parallel (ASYNC).
+
+    Args:
+        item_ids: Comma-separated list of Plex media IDs (e.g., "12345,12346,12347")
+                  OR "auto:N" to automatically find N unprocessed items
+
+    Returns:
+        JSON with ingestion results
+    """
+    logger.info(f"🚀 [TOOL] plex_ingest_items called with IDs: {item_ids}")
+
+    try:
+        # Check if using auto mode
+        if item_ids.startswith("auto:"):
+            limit = int(item_ids.split(":")[1])
+            logger.info(f"🔍 Auto mode: finding {limit} unprocessed items")
+            media_items = find_unprocessed_items(limit, False)
+            if not media_items:
+                return json.dumps({
+                    "total_processed": 0,
+                    "ingested_count": 0,
+                    "skipped_count": 0,
+                    "message": "No unprocessed items found"
+                })
+        else:
+            # Parse comma-separated IDs
+            ids_list = [id.strip() for id in item_ids.split(",") if id.strip()]
+
+            if not ids_list:
+                return json.dumps({"error": "No item IDs provided", "total_processed": 0})
+
+            logger.info(f"🔍 Fetching {len(ids_list)} items from Plex")
+
+            # Fetch actual media items from Plex by ID
+            from tools.plex.plex_utils import get_plex_server
+
+            plex = get_plex_server()
+            media_items = []
+
+            for item_id in ids_list:
+                try:
+                    # Fetch item from Plex
+                    item = plex.fetchItem(int(item_id))
+
+                    # Convert to our format
+                    media_item = {
+                        "id": item_id,
+                        "title": item.title,
+                        "type": item.type,  # "movie" or "episode"
+                        "year": getattr(item, "year", None),
+                    }
+
+                    # Add episode-specific fields if needed
+                    if item.type == "episode":
+                        media_item["show_title"] = item.grandparentTitle
+                        media_item["season"] = item.parentIndex
+                        media_item["episode"] = item.index
+
+                    media_items.append(media_item)
+                    logger.info(f"✅ Fetched: {media_item['title']}")
+
+                except Exception as e:
+                    logger.error(f"❌ Failed to fetch item {item_id}: {e}")
+                    # Add error item
+                    media_items.append({
+                        "id": item_id,
+                        "title": f"Unknown Item {item_id}",
+                        "type": "error",
+                        "error": str(e)
+                    })
+
+        import asyncio
+        import time
+
+        start_time = time.time()
+
+        logger.info(f"🚀 Processing {len(media_items)} items in parallel")
+
+        # Process in parallel using existing parallelization
+        results = await ingest_batch_parallel_conservative(media_items)
+
+        duration = time.time() - start_time
+
+        # Categorize results
+        ingested = [r for r in results if r.get("status") == "success"]
+        skipped = [r for r in results if r.get("status") != "success"]
+
+        summary = {
+            "total_processed": len(results),
+            "ingested_count": len(ingested),
+            "skipped_count": len(skipped),
+            "ingested": ingested,
+            "skipped": skipped,
+            "duration": round(duration, 2),
+            "mode": "parallel",
+            "concurrent_limit": 3
+        }
+
+        logger.info(f"✅ [TOOL] Batch complete: {len(ingested)} ingested, {len(skipped)} skipped in {duration:.2f}s")
+        return json.dumps(summary, indent=2)
+
+    except Exception as e:
+        logger.error(f"❌ [TOOL] plex_ingest_items failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return json.dumps({"error": str(e), "total_processed": 0})
+
+# TOOL 3: Ingest Single Item (Granular Processing)
+@mcp.tool()
+def plex_ingest_single(media_id: str) -> str:
+    """
+    Ingest a single Plex item's subtitles into RAG.
+
+    This is the GRANULAR PROCESSING tool for ingesting one item at a time.
+    Multi-agent can call this multiple times in parallel for maximum parallelization.
+    Use plex_ingest_items instead if you want built-in batch parallelization.
+
+    Args:
+        media_id: The Plex media ID to ingest
+
+    Returns:
+        JSON with:
+        - title: Media title
+        - id: Media ID
+        - subtitle_chunks: Number of chunks added to RAG
+        - subtitle_word_count: Total words ingested
+        - status: "success", "no_subtitles", or "error"
+        - reason: Explanation if skipped/failed
+
+    Example Response:
+        {
+          "title": "Zootopia (2016)",
+          "id": "12345",
+          "subtitle_chunks": 45,
+          "subtitle_word_count": 2500,
+          "status": "success"
+        }
+
+    Multi-Agent Usage:
+        Orchestrator creates N parallel tasks calling this tool with different
+        media_ids, achieving maximum parallelization (all items at once).
+    """
+    logger.info(f"💾 [TOOL] plex_ingest_single called for media_id: {media_id}")
+
+    try:
+        # Create minimal media item (in production, fetch from Plex API)
+        media_item = {"id": media_id, "title": f"Item {media_id}"}
+
+        # Extract subtitles
+        media_id_str, title, subtitle_lines, metadata_text = extract_subtitles_for_item(media_item)
+
+        # Ingest to RAG
+        result = ingest_item_to_rag(media_id_str, title, subtitle_lines, metadata_text)
+
+        logger.info(f"✅ [TOOL] Ingested {title}: {result['subtitle_chunks']} chunks")
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        logger.error(f"❌ [TOOL] plex_ingest_single failed for {media_id}: {e}")
+        return json.dumps({
+            "title": f"Item {media_id}",
+            "id": media_id,
+            "status": "error",
+            "reason": str(e)
+        })
+
+# TOOL 4: All-in-One Ingestion (Original - Keep for Simple Queries)
+@mcp.tool()
+async def plex_ingest_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> str:
+    """
+    Ingest the NEXT unprocessed Plex items into RAG (ALL-IN-ONE).
+
+    This is the ORIGINAL all-in-one tool that combines discovery, extraction,
+    and ingestion in one call. Use this for simple single-agent queries.
+    For multi-agent workflows, use the granular tools instead:
+    - plex_find_unprocessed (discovery)
+    - plex_ingest_items (batch parallel)
+    - plex_ingest_single (granular parallel)
+
+    Args:
+        limit: Number of NEW items to ingest (default: 5)
+        rescan_no_subtitles: Re-check items with no subtitles (default: False)
+
+    Returns:
+        JSON with complete ingestion report including stats
+
+    Multi-Agent Usage:
+        Single-agent mode uses this for simple queries like "Ingest 5 items".
+        Multi-agent mode uses granular tools for complex workflows.
+    """
+    logger.info(f"🛠 [TOOL] plex_ingest_batch called (limit: {limit})")
+
+    try:
+        result = await ingest_next_batch(limit, rescan_no_subtitles)
+        logger.info(f"✅ [TOOL] plex_ingest_batch completed")
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        logger.error(f"❌ [TOOL] plex_ingest_batch failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return json.dumps({"error": str(e)})
+
+# TOOL 5: Get Ingestion Statistics (Monitoring)
+@mcp.tool()
+def plex_get_stats() -> str:
+    """
+    Get overall Plex ingestion statistics.
+
+    Returns statistics about the entire Plex library ingestion progress.
+    Useful for monitoring and reporting.
+
+    Returns:
+        JSON with:
+        - total_items: Total items in Plex library
+        - successfully_ingested: Items successfully added to RAG
+        - missing_subtitles: Items without subtitle files
+        - remaining_unprocessed: Items not yet attempted
+
+    Multi-Agent Usage:
+        Writer agent can use this to create progress reports or summaries.
+    """
+    logger.info(f"📊 [TOOL] plex_get_stats called")
+
+    try:
+        from tools.rag.rag_storage import get_ingestion_stats
+
+        stats = get_ingestion_stats()
+
+        result = {
+            "total_items": stats["total_items"],
+            "successfully_ingested": stats["successfully_ingested"],
+            "missing_subtitles": stats["missing_subtitles"],
+            "remaining_unprocessed": stats["remaining"],
+            "completion_percentage": round(
+                (stats["successfully_ingested"] / stats["total_items"] * 100)
+                if stats["total_items"] > 0 else 0,
+                1
+            )
+        }
+
+        logger.info(f"📊 [TOOL] Stats: {result['completion_percentage']}% complete")
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        logger.error(f"❌ [TOOL] plex_get_stats failed: {e}")
+        return json.dumps({"error": str(e)})
 
 
 if __name__ == "__main__":

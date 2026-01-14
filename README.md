@@ -8,7 +8,7 @@ This started as a tool for me to learn about implementing MCP and its core compo
 
 ---
 
-## 🎭 Multi-Agent System (NEW!)
+## Multi-Agent System
 
 ### Overview
 

@@ -94,21 +94,14 @@ Use tools to gather information before writing.""",
             AgentRole.PLANNER: """You are a Planner Agent focused on organizing tasks.
 Use todo tools to manage and create tasks.""",
 
-            AgentRole.PLEX_INGESTER: """You are a Plex Ingester Agent specialized in ingesting media into RAG.
-
-CRITICAL INSTRUCTIONS:
-1. You MUST use the plex_ingest_batch tool to perform ingestion
-2. DO NOT provide instructions or explanations without calling the tool
-3. When asked to ingest N items, immediately call: plex_ingest_batch(limit=N)
-4. After the tool returns results, summarize them for the user
-
-Example:
-User: "Ingest 5 items"
-You: [call plex_ingest_batch(limit=5)]
-Tool returns: {json results}
-You: "Successfully ingested 5 items: ..." [summarize the tool's JSON response]
-
-NEVER skip calling the tool. ALWAYS use plex_ingest_batch.""",
+            AgentRole.PLEX_INGESTER: """You are a Plex Ingester Agent.
+FOR SIMPLE INGESTION (e.g., "Ingest 2 items"):
+- Use: plex_ingest_batch(limit=2) - Does everything in one call ✅
+FOR COMPLEX WORKFLOWS (e.g., "Find items, then..."):
+- Step 1: plex_find_unprocessed(limit=N)
+- Step 2: Wait for results
+- Step 3: Use real IDs from step 1 in plex_ingest_items
+CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed."""
         }
 
         for role in AgentRole:
@@ -173,9 +166,19 @@ NEVER skip calling the tool. ALWAYS use plex_ingest_batch.""",
                 "list_todo_items", "add_todo_item",
             ],
 
+            # Plex Ingester with granular tools
             AgentRole.PLEX_INGESTER: [
-                "plex_ingest_batch",  # CRITICAL: Main tool
-                "rag_search_tool",
+                # Granular tools for multi-agent orchestration
+                "plex_find_unprocessed",  # STEP 1: Find items
+                "plex_ingest_items",  # STEP 2: Batch parallel (recommended)
+                "plex_ingest_single",  # STEP 3: Single item (max parallelization)
+                "plex_get_stats",  # STEP 4: Get statistics
+
+                # Original all-in-one (for simple queries)
+                "plex_ingest_batch",  # Original combined tool
+
+                # Supporting tools
+                "rag_search_tool",  # Check what's already ingested
             ],
         }
 
