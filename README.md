@@ -214,21 +214,6 @@ Windows PowerShell
 
 ---
 
-**2. Install Multi-Agent System (Required for Multi-Agent Features)**
-
-Copy the multi-agent files to your client directory:
-
-```bash
-# From the outputs directory:
-cp multi_agent_FIXED.py client/multi_agent.py
-cp client_FINAL_FIXED.py client/client.py
-cp commands_FINAL_FIXED.py client/commands.py
-cp cli_FINAL_FIXED.py client/cli.py
-cp index_WITH_MULTIAGENT_TOGGLE.html index.html
-```
-
----
-
 **Environment Configuration**
 
 Create or update `.env` file:
@@ -815,4 +800,5 @@ All features including multi-agent toggle work on modern browsers with WebSocket
 - `:multi` commands for CLI
 - Environment variable configuration
 - Per-session mode switching
+
 - Automatic mode selection based on query complexity
