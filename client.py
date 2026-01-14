@@ -47,7 +47,7 @@ MAX_MESSAGE_HISTORY = int(os.getenv("MAX_MESSAGE_HISTORY", "20"))
 
 # Shared multi-agent state (mutable dict so changes propagate)
 MULTI_AGENT_STATE = {
-    "enabled": MULTI_AGENT_AVAILABLE and os.getenv("MULTI_AGENT_ENABLED", "true").lower() == "true"
+    "enabled": MULTI_AGENT_AVAILABLE and os.getenv("MULTI_AGENT_ENABLED", "false").lower() == "true"
 }
 
 # Default system prompt - will be overridden if tool_usage_guide.md exists
