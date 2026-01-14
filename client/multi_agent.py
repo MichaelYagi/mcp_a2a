@@ -1,6 +1,6 @@
 """
 Multi-Agent Execution System
-Orchestrates multiple specialized agents working together on complex tasks
+Uses LangChain AgentExecutor to actually run tools
 """
 
 import asyncio
@@ -11,16 +11,19 @@ from dataclasses import dataclass
 from enum import Enum
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 
 class AgentRole(Enum):
     """Defines different agent specializations"""
-    ORCHESTRATOR = "orchestrator"  # Coordinates other agents
-    RESEARCHER = "researcher"      # Web search, RAG, information gathering
-    CODER = "coder"               # Code generation, technical tasks
-    ANALYST = "analyst"           # Data analysis, interpretation
-    WRITER = "writer"             # Content creation, documentation
-    PLANNER = "planner"           # Task decomposition, planning
+    ORCHESTRATOR = "orchestrator"
+    RESEARCHER = "researcher"
+    CODER = "coder"
+    ANALYST = "analyst"
+    WRITER = "writer"
+    PLANNER = "planner"
+    PLEX_INGESTER = "plex_ingester"
 
 
 @dataclass
@@ -30,9 +33,9 @@ class AgentTask:
     role: AgentRole
     description: str
     context: Dict[str, Any]
-    dependencies: List[str] = None  # Task IDs this depends on
+    dependencies: List[str] = None
     result: Optional[Any] = None
-    status: str = "pending"  # pending, running, completed, failed
+    status: str = "pending"
     start_time: Optional[float] = None
     end_time: Optional[float] = None
 
@@ -43,7 +46,7 @@ class AgentTask:
 
 class MultiAgentOrchestrator:
     """
-    Orchestrates multiple specialized agents to work on complex tasks
+    Orchestrates multiple specialized agents with PROPER tool execution
     """
 
     def __init__(self, base_llm, tools, logger: logging.Logger):
@@ -57,103 +60,97 @@ class MultiAgentOrchestrator:
 
         self.logger = logger
 
-        # Create specialized agents with different system prompts
-        self.agents = self._create_specialized_agents()
+        # Create specialized agent executors
+        self.agent_executors = self._create_agent_executors()
 
         # Task management
         self.tasks: Dict[str, AgentTask] = {}
         self.task_results: Dict[str, Any] = {}
 
-    def _create_specialized_agents(self) -> Dict[AgentRole, Any]:
-        """Create specialized agents with role-specific prompts and tools"""
+    def _create_agent_executors(self) -> Dict[AgentRole, AgentExecutor]:
+        """Create agent executors with proper tool calling"""
 
-        agents = {}
+        executors = {}
 
         # System prompts for each role
-        prompts = {
-            AgentRole.ORCHESTRATOR: """You are an Orchestrator Agent. Your role is to:
-1. Break down complex tasks into smaller, manageable subtasks
-2. Assign subtasks to specialized agents (Researcher, Coder, Analyst, Writer, Planner)
-3. Coordinate execution order based on dependencies
-4. Aggregate results from all agents
-
+        system_prompts = {
+            AgentRole.ORCHESTRATOR: """You are an Orchestrator Agent coordinating multiple specialized agents.
 When given a task, create a detailed execution plan with subtasks.
-Respond in JSON format:
-{
-  "subtasks": [
-    {
-      "id": "task_1",
-      "role": "researcher",
-      "description": "...",
-      "dependencies": []
-    }
-  ]
-}
+Respond in JSON format with subtasks array, or {{"subtasks": []}} for simple tasks.""",
 
-If this is a simple task that doesn't need multiple agents, respond with:
-{"subtasks": []}""",
+            AgentRole.RESEARCHER: """You are a Researcher Agent focused on gathering accurate information.
+ALWAYS use your available tools to search for information.
+Never make up information - use tools to find real data.""",
 
-            AgentRole.RESEARCHER: """You are a Researcher Agent. Your role is to:
-1. Search for information using RAG and web search tools
-2. Gather relevant data from multiple sources
-3. Summarize findings clearly and concisely
-4. Cite sources when available
+            AgentRole.CODER: """You are a Coder Agent focused on writing quality code.
+Use tools when you need to look up code examples or documentation.""",
 
-Focus on accuracy and thoroughness.""",
+            AgentRole.ANALYST: """You are an Analyst Agent focused on data analysis and insights.
+Use tools to gather data before analyzing.""",
 
-            AgentRole.CODER: """You are a Coder Agent. Your role is to:
-1. Write clean, efficient code
-2. Follow best practices and patterns
-3. Add helpful comments and documentation
-4. Test and validate solutions
+            AgentRole.WRITER: """You are a Writer Agent focused on clear communication.
+Use tools to gather information before writing.""",
 
-Focus on code quality and maintainability.""",
+            AgentRole.PLANNER: """You are a Planner Agent focused on organizing tasks.
+Use todo tools to manage and create tasks.""",
 
-            AgentRole.ANALYST: """You are an Analyst Agent. Your role is to:
-1. Analyze data and identify patterns
-2. Create visualizations and summaries
-3. Draw insights and conclusions
-4. Present findings clearly
+            AgentRole.PLEX_INGESTER: """You are a Plex Ingester Agent specialized in ingesting media into RAG.
 
-Focus on clarity and actionable insights.""",
+CRITICAL INSTRUCTIONS:
+1. You MUST use the plex_ingest_batch tool to perform ingestion
+2. DO NOT provide instructions or explanations without calling the tool
+3. When asked to ingest N items, immediately call: plex_ingest_batch(limit=N)
+4. After the tool returns results, summarize them for the user
 
-            AgentRole.WRITER: """You are a Writer Agent. Your role is to:
-1. Create clear, engaging content
-2. Structure information logically
-3. Adapt tone to audience
-4. Edit and refine output
+Example:
+User: "Ingest 5 items"
+You: [call plex_ingest_batch(limit=5)]
+Tool returns: {json results}
+You: "Successfully ingested 5 items: ..." [summarize the tool's JSON response]
 
-Focus on clarity and readability.""",
-
-            AgentRole.PLANNER: """You are a Planner Agent. Your role is to:
-1. Decompose complex tasks into steps
-2. Identify dependencies and order
-3. Estimate time and resources
-4. Create execution roadmaps
-
-Focus on organization and feasibility.""",
+NEVER skip calling the tool. ALWAYS use plex_ingest_batch.""",
         }
 
-        for role, prompt in prompts.items():
-            # Filter tools based on agent role
-            agent_tools = self._get_tools_for_role(role)
+        for role in AgentRole:
+            # Get tools for this role
+            role_tools = self._get_tools_for_role(role)
 
-            # Create agent with role-specific tools
-            if agent_tools:
-                agents[role] = self.base_llm.bind_tools(agent_tools)
-            else:
-                agents[role] = self.base_llm
+            if not role_tools and role != AgentRole.ORCHESTRATOR:
+                # No tools, just use base LLM
+                executors[role] = None
+                self.logger.info(f"✅ Created {role.value} agent (no tools)")
+                continue
 
-            self.logger.info(f"✅ Created {role.value} agent with {len(agent_tools)} tools")
+            # Create prompt template with system message
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompts.get(role, "You are a helpful AI assistant.")),
+                MessagesPlaceholder(variable_name="chat_history", optional=True),
+                ("human", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ])
 
-        return agents
+            # Create tool-calling agent
+            agent = create_tool_calling_agent(self.base_llm, role_tools, prompt)
+
+            # Create executor with tool calling enabled
+            executor = AgentExecutor(
+                agent=agent,
+                tools=role_tools,
+                verbose=False,  # Set to True for debugging
+                handle_parsing_errors=True,
+                max_iterations=5,  # Prevent infinite loops
+            )
+
+            executors[role] = executor
+            self.logger.info(f"✅ Created {role.value} agent with {len(role_tools)} tools")
+
+        return executors
 
     def _get_tools_for_role(self, role: AgentRole) -> List:
         """Get appropriate tools for each agent role"""
 
-        # Tool mappings for each role
         role_tools = {
-            AgentRole.ORCHESTRATOR: [],  # No tools, just planning
+            AgentRole.ORCHESTRATOR: [],
 
             AgentRole.RESEARCHER: [
                 "rag_search_tool", "search_entries", "search_semantic",
@@ -161,7 +158,7 @@ Focus on organization and feasibility.""",
             ],
 
             AgentRole.CODER: [
-                "rag_search_tool",  # For code examples
+                "rag_search_tool",
             ],
 
             AgentRole.ANALYST: [
@@ -174,6 +171,11 @@ Focus on organization and feasibility.""",
 
             AgentRole.PLANNER: [
                 "list_todo_items", "add_todo_item",
+            ],
+
+            AgentRole.PLEX_INGESTER: [
+                "plex_ingest_batch",  # CRITICAL: Main tool
+                "rag_search_tool",
             ],
         }
 
@@ -188,9 +190,7 @@ Focus on organization and feasibility.""",
         return available_tools
 
     async def execute(self, user_request: str) -> str:
-        """
-        Main entry point for multi-agent execution
-        """
+        """Main entry point for multi-agent execution"""
 
         self.logger.info(f"🎭 Multi-agent execution started: {user_request}")
         start_time = time.time()
@@ -200,6 +200,7 @@ Focus on organization and feasibility.""",
             plan = await self._create_execution_plan(user_request)
 
             if not plan:
+                self.logger.info("📊 Simple query detected, falling back to single agent")
                 return await self._fallback_single_agent(user_request)
 
             # Step 2: Execute tasks
@@ -214,7 +215,7 @@ Focus on organization and feasibility.""",
             return final_response
 
         except Exception as e:
-            self.logger.error(f"❌ Multi-agent execution failed: {e}")
+            self.logger.error(f"❌ Multi-agent execution failed: {e}, falling back to single agent")
             import traceback
             traceback.print_exc()
             return await self._fallback_single_agent(user_request)
@@ -224,8 +225,7 @@ Focus on organization and feasibility.""",
 
         self.logger.info("📋 Creating execution plan...")
 
-        orchestrator = self.agents[AgentRole.ORCHESTRATOR]
-
+        # Orchestrator has no tools, use base LLM
         planning_prompt = f"""Given this user request: "{user_request}"
 
 Create an execution plan by breaking it into subtasks.
@@ -242,14 +242,14 @@ Respond ONLY with JSON in this format:
   ]
 }}
 
-Available roles: researcher, coder, analyst, writer, planner
+Available roles: researcher, coder, analyst, writer, planner, plex_ingester
 
 If this is a simple task that doesn't need multiple agents, respond with:
 {{"subtasks": []}}"""
 
         try:
-            response = await orchestrator.ainvoke([
-                SystemMessage(content=self._get_system_prompt(AgentRole.ORCHESTRATOR)),
+            response = await self.base_llm.ainvoke([
+                SystemMessage(content="You are an Orchestrator Agent coordinating multiple specialized agents."),
                 HumanMessage(content=planning_prompt)
             ])
 
@@ -278,6 +278,7 @@ If this is a simple task that doesn't need multiple agents, respond with:
                 try:
                     role = AgentRole(role_str)
                 except ValueError:
+                    self.logger.warning(f"⚠️  Unknown role '{role_str}', defaulting to researcher")
                     role = AgentRole.RESEARCHER
 
                 task = AgentTask(
@@ -310,9 +311,7 @@ If this is a simple task that doesn't need multiple agents, respond with:
         completed = set()
         results = {}
 
-        # Execute tasks in waves based on dependencies
         while len(completed) < len(tasks):
-            # Find tasks that can run (dependencies met)
             ready_tasks = [
                 task for task in tasks
                 if task.task_id not in completed
@@ -323,7 +322,6 @@ If this is a simple task that doesn't need multiple agents, respond with:
                 self.logger.error("❌ Dependency deadlock detected")
                 break
 
-            # Execute ready tasks in parallel
             self.logger.info(f"⚙️ Executing {len(ready_tasks)} parallel tasks...")
 
             task_coroutines = [
@@ -333,7 +331,6 @@ If this is a simple task that doesn't need multiple agents, respond with:
 
             task_results = await asyncio.gather(*task_coroutines, return_exceptions=True)
 
-            # Mark completed
             for task, result in zip(ready_tasks, task_results):
                 if isinstance(result, Exception):
                     self.logger.error(f"❌ Task {task.task_id} failed: {result}")
@@ -347,7 +344,7 @@ If this is a simple task that doesn't need multiple agents, respond with:
         return results
 
     async def _execute_single_task(self, task: AgentTask, previous_results: Dict) -> str:
-        """Execute a single agent task"""
+        """Execute a single agent task WITH TOOL EXECUTION"""
 
         task.status = "running"
         task.start_time = time.time()
@@ -355,7 +352,7 @@ If this is a simple task that doesn't need multiple agents, respond with:
         self.logger.info(f"🤖 {task.role.value} executing: {task.description[:50]}...")
 
         try:
-            agent = self.agents[task.role]
+            executor = self.agent_executors.get(task.role)
 
             # Build context from previous results
             context_info = ""
@@ -363,42 +360,50 @@ If this is a simple task that doesn't need multiple agents, respond with:
                 if dep_id in previous_results:
                     context_info += f"\n\nResult from {dep_id}:\n{previous_results[dep_id]}"
 
-            # Create prompt with context
-            prompt = f"""Task: {task.description}
+            # Create input for executor
+            task_input = f"""Task: {task.description}
 
 User's original request: {task.context.get('user_request', '')}
 {context_info}
 
-Provide a clear, concise response for this specific subtask."""
+Complete this task using your available tools."""
 
-            response = await agent.ainvoke([
-                SystemMessage(content=self._get_system_prompt(task.role)),
-                HumanMessage(content=prompt)
-            ])
+            # Execute with tools
+            if executor:
+                self.logger.info(f"🔧 Running {task.role.value} with tool execution enabled...")
+                result = await executor.ainvoke({"input": task_input})
+                output = result.get("output", str(result))
+            else:
+                # No tools, use base LLM
+                self.logger.info(f"💬 Running {task.role.value} without tools...")
+                response = await self.base_llm.ainvoke([
+                    SystemMessage(content=f"You are a {task.role.value} agent."),
+                    HumanMessage(content=task_input)
+                ])
+                output = response.content
 
-            task.result = response.content
+            task.result = output
             task.status = "completed"
             task.end_time = time.time()
 
             duration = task.end_time - task.start_time
             self.logger.info(f"✅ {task.role.value} completed in {duration:.2f}s")
 
-            return response.content
+            return output
 
         except Exception as e:
             task.status = "failed"
             task.end_time = time.time()
             self.logger.error(f"❌ Task {task.task_id} failed: {e}")
+            import traceback
+            traceback.print_exc()
             raise
 
     async def _aggregate_results(self, user_request: str, results: Dict[str, Any]) -> str:
-        """Aggregate results from all agents into final response"""
+        """Aggregate results from all agents"""
 
         self.logger.info("📊 Aggregating results...")
 
-        orchestrator = self.agents[AgentRole.ORCHESTRATOR]
-
-        # Build summary of all results
         results_summary = ""
         for task_id, result in results.items():
             task = self.tasks.get(task_id)
@@ -411,9 +416,9 @@ Results from specialized agents:
 {results_summary}
 
 Synthesize these results into a coherent, final response that directly answers the user's request.
-Focus on clarity and completeness. Remove any redundancy."""
+Focus on clarity and completeness."""
 
-        response = await orchestrator.ainvoke([
+        response = await self.base_llm.ainvoke([
             SystemMessage(content="You are synthesizing results from multiple agents. Create a clear, unified response."),
             HumanMessage(content=aggregation_prompt)
         ])
@@ -421,51 +426,52 @@ Focus on clarity and completeness. Remove any redundancy."""
         return response.content
 
     async def _fallback_single_agent(self, user_request: str) -> str:
-        """Fallback to single agent if multi-agent fails"""
+        """Fallback to single agent with tool execution"""
 
-        self.logger.info("🔄 Falling back to single agent")
+        self.logger.info("🔄 Using single-agent fallback mode")
 
-        researcher = self.agents[AgentRole.RESEARCHER]
-        response = await researcher.ainvoke([
-            SystemMessage(content=self._get_system_prompt(AgentRole.RESEARCHER)),
-            HumanMessage(content=user_request)
-        ])
+        # Choose best agent based on keywords
+        request_lower = user_request.lower()
 
-        return response.content
+        if "plex" in request_lower or "ingest" in request_lower or "subtitle" in request_lower:
+            agent_role = AgentRole.PLEX_INGESTER
+        elif "code" in request_lower:
+            agent_role = AgentRole.CODER
+        elif "analyze" in request_lower:
+            agent_role = AgentRole.ANALYST
+        elif "write" in request_lower:
+            agent_role = AgentRole.WRITER
+        elif "plan" in request_lower or "todo" in request_lower:
+            agent_role = AgentRole.PLANNER
+        else:
+            agent_role = AgentRole.RESEARCHER
 
-    def _get_system_prompt(self, role: AgentRole) -> str:
-        """Get system prompt for a specific role"""
+        self.logger.info(f"📌 Selected {agent_role.value} agent for single-agent execution")
 
-        prompts = {
-            AgentRole.ORCHESTRATOR: "You are an Orchestrator Agent coordinating multiple specialized agents.",
-            AgentRole.RESEARCHER: "You are a Researcher Agent focused on gathering accurate information.",
-            AgentRole.CODER: "You are a Coder Agent focused on writing quality code.",
-            AgentRole.ANALYST: "You are an Analyst Agent focused on data analysis and insights.",
-            AgentRole.WRITER: "You are a Writer Agent focused on clear communication.",
-            AgentRole.PLANNER: "You are a Planner Agent focused on organizing and planning tasks.",
-        }
+        executor = self.agent_executors.get(agent_role)
 
-        return prompts.get(role, "You are a helpful AI assistant.")
+        if executor:
+            self.logger.info(f"🔧 Running {agent_role.value} with tool execution enabled...")
+            result = await executor.ainvoke({"input": user_request})
+            return result.get("output", str(result))
+        else:
+            # No tools, use base LLM
+            response = await self.base_llm.ainvoke([
+                SystemMessage(content=f"You are a {agent_role.value} agent."),
+                HumanMessage(content=user_request)
+            ])
+            return response.content
 
 
 async def should_use_multi_agent(user_request: str) -> bool:
-    """
-    Determine if a request should use multi-agent execution
-    """
+    """Determine if a request should use multi-agent execution"""
 
     request_lower = user_request.lower()
 
-    # Indicators of complex multi-step tasks
     multi_step_indicators = [
-        " and then ",
-        " then ",
-        " after that ",
-        " next ",
-        "first.*then",
-        "research.*analyze",
-        "find.*summarize",
-        "gather.*create",
-        "search.*write",
+        " and then ", " then ", " after that ", " next ",
+        "first.*then", "research.*analyze", "find.*summarize",
+        "gather.*create", "search.*write", "ingest.*and.*",
     ]
 
     import re
@@ -473,7 +479,6 @@ async def should_use_multi_agent(user_request: str) -> bool:
         if re.search(indicator, request_lower):
             return True
 
-    # Complex task keywords
     complex_keywords = [
         "comprehensive", "detailed analysis", "full report",
         "research and", "analyze and", "compare and"
@@ -482,7 +487,6 @@ async def should_use_multi_agent(user_request: str) -> bool:
     if any(keyword in request_lower for keyword in complex_keywords):
         return True
 
-    # Check word count (long requests often need breakdown)
     if len(user_request.split()) > 30:
         return True
 
