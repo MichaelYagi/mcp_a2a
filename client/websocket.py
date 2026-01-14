@@ -173,7 +173,10 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
 
                 print("\n" + assistant_text + "\n")
 
-                await broadcast_message("assistant_message", {"text": assistant_text})
+                await broadcast_message("assistant_message", {
+                    "text": assistant_text,
+                    "multi_agent": result.get("multi_agent", False)  # ← Add this!
+                })
     finally:
         CONNECTED_WEBSOCKETS.discard(websocket)
         SYSTEM_MONITOR_CLIENTS.discard(websocket)

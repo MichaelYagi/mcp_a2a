@@ -1,6 +1,6 @@
 """
-Multi-Agent Execution System
-Uses LangChain AgentExecutor to actually run tools
+Multi-Agent Execution System (Updated for LangChain 1.2.0)
+Uses LangChain create_agent for tool execution
 """
 
 import asyncio
@@ -10,9 +10,8 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain.agents import create_agent
 
 
 class AgentRole(Enum):
@@ -47,6 +46,7 @@ class AgentTask:
 class MultiAgentOrchestrator:
     """
     Orchestrates multiple specialized agents with PROPER tool execution
+    Updated for LangChain 1.2.0
     """
 
     def __init__(self, base_llm, tools, logger: logging.Logger):
@@ -67,7 +67,7 @@ class MultiAgentOrchestrator:
         self.tasks: Dict[str, AgentTask] = {}
         self.task_results: Dict[str, Any] = {}
 
-    def _create_agent_executors(self) -> Dict[AgentRole, AgentExecutor]:
+    def _create_agent_executors(self) -> Dict[AgentRole, Dict]:
         """Create agent executors with proper tool calling"""
 
         executors = {}
@@ -76,7 +76,22 @@ class MultiAgentOrchestrator:
         system_prompts = {
             AgentRole.ORCHESTRATOR: """You are an Orchestrator Agent coordinating multiple specialized agents.
 When given a task, create a detailed execution plan with subtasks.
-Respond in JSON format with subtasks array, or {{"subtasks": []}} for simple tasks.""",
+Respond ONLY with JSON in this format:
+{{
+  "subtasks": [
+    {{
+      "id": "task_1",
+      "role": "researcher",
+      "description": "Detailed task description",
+      "dependencies": []
+    }}
+  ]
+}}
+
+Available roles: researcher, coder, analyst, writer, planner, plex_ingester
+
+If this is a simple task that doesn't need multiple agents, respond with:
+{{"subtasks": []}}""",
 
             AgentRole.RESEARCHER: """You are a Researcher Agent focused on gathering accurate information.
 ALWAYS use your available tools to search for information.
@@ -109,33 +124,30 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             role_tools = self._get_tools_for_role(role)
 
             if not role_tools and role != AgentRole.ORCHESTRATOR:
-                # No tools, just use base LLM
+                # No tools, store None
                 executors[role] = None
                 self.logger.info(f"✅ Created {role.value} agent (no tools)")
                 continue
 
-            # Create prompt template with system message
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompts.get(role, "You are a helpful AI assistant.")),
-                MessagesPlaceholder(variable_name="chat_history", optional=True),
-                ("human", "{input}"),
-                MessagesPlaceholder(variable_name="agent_scratchpad"),
-            ])
+            # Create agent with LangChain 1.2.0 API
+            try:
+                agent = create_agent(
+                    self.base_llm,
+                    role_tools
+                )
 
-            # Create tool-calling agent
-            agent = create_tool_calling_agent(self.base_llm, role_tools, prompt)
+                # Store both agent and system prompt
+                executors[role] = {
+                    "agent": agent,
+                    "system_prompt": system_prompts.get(role, "You are a helpful AI assistant."),
+                    "tools": role_tools
+                }
 
-            # Create executor with tool calling enabled
-            executor = AgentExecutor(
-                agent=agent,
-                tools=role_tools,
-                verbose=False,  # Set to True for debugging
-                handle_parsing_errors=True,
-                max_iterations=5,  # Prevent infinite loops
-            )
+                self.logger.info(f"✅ Created {role.value} agent with {len(role_tools)} tools")
 
-            executors[role] = executor
-            self.logger.info(f"✅ Created {role.value} agent with {len(role_tools)} tools")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to create {role.value} agent: {e}")
+                executors[role] = None
 
         return executors
 
@@ -355,7 +367,7 @@ If this is a simple task that doesn't need multiple agents, respond with:
         self.logger.info(f"🤖 {task.role.value} executing: {task.description[:50]}...")
 
         try:
-            executor = self.agent_executors.get(task.role)
+            agent_info = self.agent_executors.get(task.role)
 
             # Build context from previous results
             context_info = ""
@@ -363,7 +375,7 @@ If this is a simple task that doesn't need multiple agents, respond with:
                 if dep_id in previous_results:
                     context_info += f"\n\nResult from {dep_id}:\n{previous_results[dep_id]}"
 
-            # Create input for executor
+            # Create input for agent
             task_input = f"""Task: {task.description}
 
 User's original request: {task.context.get('user_request', '')}
@@ -372,10 +384,25 @@ User's original request: {task.context.get('user_request', '')}
 Complete this task using your available tools."""
 
             # Execute with tools
-            if executor:
+            if agent_info:
+                agent = agent_info["agent"]
+                system_prompt = agent_info["system_prompt"]
+
                 self.logger.info(f"🔧 Running {task.role.value} with tool execution enabled...")
-                result = await executor.ainvoke({"input": task_input})
-                output = result.get("output", str(result))
+
+                # Build messages with system prompt
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=task_input)
+                ]
+
+                # Invoke agent with messages
+                result = await agent.ainvoke({"messages": messages})
+
+                # Extract output from last message
+                last_message = result["messages"][-1]
+                output = last_message.content if hasattr(last_message, 'content') else str(last_message)
+
             else:
                 # No tools, use base LLM
                 self.logger.info(f"💬 Running {task.role.value} without tools...")
@@ -451,12 +478,22 @@ Focus on clarity and completeness."""
 
         self.logger.info(f"📌 Selected {agent_role.value} agent for single-agent execution")
 
-        executor = self.agent_executors.get(agent_role)
+        agent_info = self.agent_executors.get(agent_role)
 
-        if executor:
+        if agent_info:
+            agent = agent_info["agent"]
+            system_prompt = agent_info["system_prompt"]
+
             self.logger.info(f"🔧 Running {agent_role.value} with tool execution enabled...")
-            result = await executor.ainvoke({"input": user_request})
-            return result.get("output", str(result))
+
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_request)
+            ]
+
+            result = await agent.ainvoke({"messages": messages})
+            last_message = result["messages"][-1]
+            return last_message.content if hasattr(last_message, 'content') else str(last_message)
         else:
             # No tools, use base LLM
             response = await self.base_llm.ainvoke([
@@ -469,7 +506,13 @@ Focus on clarity and completeness."""
 async def should_use_multi_agent(user_request: str) -> bool:
     """Determine if a request should use multi-agent execution"""
 
+    print(f"DEBUG: Checking multi-agent for: {user_request}")  # Debug output
+
+    import logging
+    logger = logging.getLogger("mcp_client")
+
     request_lower = user_request.lower()
+    logger.info(f"🔍 Checking multi-agent for: {request_lower[:100]}")
 
     multi_step_indicators = [
         " and then ", " then ", " after that ", " next ",
@@ -480,6 +523,8 @@ async def should_use_multi_agent(user_request: str) -> bool:
     import re
     for indicator in multi_step_indicators:
         if re.search(indicator, request_lower):
+            logger.info(f"✅ Multi-agent triggered by: {indicator}")
+            print(f"DEBUG: Multi-agent triggered by: {indicator}")
             return True
 
     complex_keywords = [
@@ -488,9 +533,15 @@ async def should_use_multi_agent(user_request: str) -> bool:
     ]
 
     if any(keyword in request_lower for keyword in complex_keywords):
+        logger.info(f"✅ Multi-agent triggered by keyword")
+        print(f"DEBUG: Multi-agent triggered by keyword")
         return True
 
     if len(user_request.split()) > 30:
+        logger.info(f"✅ Multi-agent triggered by length: {len(user_request.split())} words")
+        print(f"DEBUG: Multi-agent triggered by length")
         return True
 
+    logger.info(f"❌ Multi-agent NOT triggered")
+    print(f"DEBUG: Multi-agent NOT triggered")
     return False

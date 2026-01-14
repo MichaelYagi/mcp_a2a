@@ -107,7 +107,7 @@ from tools.rag.rag_diagnose import diagnose_rag
 # ─────────────────────────────────────────────
 from tools.plex.semantic_media_search import semantic_media_search
 from tools.plex.scene_locator import scene_locator
-from tools.plex.ingest import ingest_next_batch, ingest_item_to_rag, extract_subtitles_for_item, ingest_batch_parallel_conservative, find_unprocessed_items
+from tools.plex.ingest import ingest_next_batch, ingest_batch_parallel_conservative, find_unprocessed_items, process_item_async
 
 mcp = FastMCP("MCP server")
 
@@ -1575,52 +1575,55 @@ async def plex_ingest_items(item_ids: str) -> str:
 
 # TOOL 3: Ingest Single Item (Granular Processing)
 @mcp.tool()
-def plex_ingest_single(media_id: str) -> str:
+async def plex_ingest_single(media_id: str) -> str:
     """
-    Ingest a single Plex item's subtitles into RAG.
-
-    This is the GRANULAR PROCESSING tool for ingesting one item at a time.
-    Multi-agent can call this multiple times in parallel for maximum parallelization.
-    Use plex_ingest_items instead if you want built-in batch parallelization.
+    Ingest a single Plex item.
 
     Args:
-        media_id: The Plex media ID to ingest
-
-    Returns:
-        JSON with:
-        - title: Media title
-        - id: Media ID
-        - subtitle_chunks: Number of chunks added to RAG
-        - subtitle_word_count: Total words ingested
-        - status: "success", "no_subtitles", or "error"
-        - reason: Explanation if skipped/failed
-
-    Example Response:
-        {
-          "title": "Zootopia (2016)",
-          "id": "12345",
-          "subtitle_chunks": 45,
-          "subtitle_word_count": 2500,
-          "status": "success"
-        }
-
-    Multi-Agent Usage:
-        Orchestrator creates N parallel tasks calling this tool with different
-        media_ids, achieving maximum parallelization (all items at once).
+        media_id: Plex media ID, or "auto" to automatically find one unprocessed item
     """
     logger.info(f"💾 [TOOL] plex_ingest_single called for media_id: {media_id}")
 
     try:
-        # Create minimal media item (in production, fetch from Plex API)
-        media_item = {"id": media_id, "title": f"Item {media_id}"}
+        # Handle auto mode
+        if media_id == "auto" or media_id.startswith("auto"):
+            logger.info("🔍 Auto mode: finding 1 unprocessed item")
+            items = find_unprocessed_items(1, False)
+            if not items:
+                return json.dumps({
+                    "title": "No items",
+                    "id": "none",
+                    "status": "error",
+                    "reason": "No unprocessed items found"
+                })
+            media_item = items[0]
+        else:
+            # Fetch real item from Plex by ID
+            from tools.plex.plex_utils import get_plex_server
+            plex = get_plex_server()
 
-        # Extract subtitles
-        media_id_str, title, subtitle_lines, metadata_text = extract_subtitles_for_item(media_item)
+            try:
+                item = plex.fetchItem(int(media_id))
+                media_item = {
+                    "id": media_id,
+                    "title": item.title,
+                    "type": item.type,
+                    "year": getattr(item, "year", None),
+                }
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch item {media_id}: {e}")
+                return json.dumps({
+                    "title": f"Item {media_id}",
+                    "id": media_id,
+                    "status": "error",
+                    "reason": f"Could not fetch item: {str(e)}"
+                })
 
-        # Ingest to RAG
-        result = ingest_item_to_rag(media_id_str, title, subtitle_lines, metadata_text)
+        # Process the item
+        logger.info(f"📥 Extracting subtitles for: {media_item.get('title', media_id)}")
+        result = await process_item_async(media_item)
 
-        logger.info(f"✅ [TOOL] Ingested {title}: {result['subtitle_chunks']} chunks")
+        logger.info(f"✅ [TOOL] Ingested: {result.get('title', 'unknown')}")
         return json.dumps(result, indent=2)
 
     except Exception as e:
