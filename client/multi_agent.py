@@ -20,6 +20,10 @@ from .agents.plex_ingester import PlexIngesterAgent
 from .agents.analyst import AnalystAgent
 from .agents.planner import PlannerAgent
 from .agents.writer import WriterAgent
+from .message_router import MessageRouter, MessageProtocol, MessagePriority, RoutingStrategy
+from .negotiation_engine import NegotiationEngine
+from .health_monitor import HealthMonitor
+from .performance_metrics import PerformanceMetrics
 
 class AgentRole(Enum):
     """Defines different agent specializations"""
@@ -62,6 +66,7 @@ class MultiAgentOrchestrator:
         self.a2a_agents: Dict[str, Any] = {}
         self.message_queue: asyncio.Queue = asyncio.Queue()
 
+
         # Handle tools as either list or dict
         if isinstance(tools, dict):
             self.tools = list(tools.values())
@@ -76,6 +81,12 @@ class MultiAgentOrchestrator:
         # Task management
         self.tasks: Dict[str, AgentTask] = {}
         self.task_results: Dict[str, Any] = {}
+
+        # A2A
+        self.message_router = MessageRouter(logger)
+        self.negotiation_engine = NegotiationEngine(logger)
+        self.health_monitor = HealthMonitor(logger)
+        self.performance_metrics = PerformanceMetrics(logger)
 
     def _create_agent_executors(self) -> Dict[AgentRole, Dict]:
         """Create agent executors with proper tool calling"""
@@ -215,16 +226,32 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
         return available_tools
 
     def enable_a2a(self):
-        """Enable Agent-to-Agent communication system"""
+        """Enable Agent-to-Agent communication with advanced features"""
         if self.a2a_enabled:
-            self.logger.info("✅ A2A already enabled")
             return
 
-        self.logger.info("🔗 Initializing A2A system...")
+        self.logger.info("🔗 Initializing advanced A2A system...")
 
-        # Message bus callback
+        # Start health monitoring
+        asyncio.create_task(self.health_monitor.start_monitoring())
+
+        # Message bus callback with routing
         async def message_bus(message: AgentMessage):
-            await self.message_queue.put(message)
+            # Convert to MessageEnvelope and route
+            from client.message_router import MessageEnvelope, MessagePriority
+
+            envelope = MessageEnvelope(
+                message_id=f"msg_{int(time.time() * 1000)}",
+                from_agent=message.from_agent,
+                to_agent=message.to_agent,
+                content=message.content,
+                priority=MessagePriority.NORMAL,
+                routing_strategy=RoutingStrategy.DIRECT if message.to_agent else RoutingStrategy.BROADCAST,
+                timestamp=message.timestamp or time.time(),
+                metadata=message.metadata
+            )
+
+            await self.message_router.route_message(envelope)
 
         # Create specialized A2A agents
         tools_map = {

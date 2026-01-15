@@ -21,6 +21,15 @@ def get_commands_list():
         ":a2a on - Enable agent-to-agent mode",
         ":a2a off - Disable agent-to-agent mode",
         ":a2a status - Check A2A system status",
+        ":health - Show agent health summary",
+        ":health alerts - Show recent health alerts",
+        ":health <agent> - Show health for specific agent",
+        ":metrics - Show performance metrics summary",
+        ":metrics comparative - Compare agent performance",
+        ":metrics bottlenecks - Show performance bottlenecks",
+        ":negotiations - Show negotiation statistics",
+        ":routing - Show message routing statistics",
+        ":routing queues - Show message queue status",
         ":clear history - Clear the chat history"
     ]
 
@@ -105,6 +114,172 @@ async def handle_multi_agent_commands(command: str, orchestrator, multi_agent_st
 
     return None
 
+async def handle_health_commands(command: str, orchestrator):
+    """Handle health monitoring commands"""
+    if not orchestrator or not orchestrator.health_monitor:
+        return "❌ Health monitoring not available"
+
+    if command == ":health":
+        summary = orchestrator.health_monitor.get_health_summary()
+
+        output = ["🏥 AGENT HEALTH SUMMARY", "=" * 60, ""]
+        output.append(f"Status: {summary['status'].upper()}")
+        output.append(f"Total Agents: {summary['total_agents']}")
+        output.append(f"  Healthy: {summary['healthy']} | Degraded: {summary['degraded']}")
+        output.append(f"  Unhealthy: {summary['unhealthy']} | Offline: {summary['offline']}")
+        output.append("")
+        output.append(f"Total Tasks: {summary['total_tasks']}")
+        output.append(f"Total Errors: {summary['total_errors']}")
+        output.append(f"Avg Response Time: {summary['avg_response_time']:.2f}s")
+        output.append(f"Recent Alerts: {summary['recent_alerts']}")
+        output.append("=" * 60)
+
+        return "\n".join(output)
+
+    elif command == ":health alerts":
+        alerts = orchestrator.health_monitor.get_recent_alerts(limit=10)
+
+        if not alerts:
+            return "No recent alerts"
+
+        output = ["🚨 RECENT ALERTS", "=" * 60]
+        for alert in alerts:
+            output.append(f"{alert.level.value.upper()} | {alert.agent_id}")
+            output.append(f"  {alert.message}")
+            output.append(f"  {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(alert.timestamp))}")
+            output.append("")
+
+        return "\n".join(output)
+
+    elif command.startswith(":health "):
+        agent_id = command[8:].strip()
+        health = orchestrator.health_monitor.get_agent_health(agent_id)
+
+        if not health:
+            return f"❌ Agent {agent_id} not found"
+
+        output = [f"🏥 HEALTH: {agent_id}", "=" * 60, ""]
+        output.append(f"Status: {health.status.value.upper()}")
+        output.append(f"Uptime: {health.uptime / 60:.1f} minutes")
+        output.append(f"Tasks: {health.tasks_completed} completed, {health.tasks_failed} failed")
+        output.append(f"Avg Response: {health.avg_response_time:.2f}s")
+        output.append(f"Queue Size: {health.queue_size}")
+        output.append(f"Error Count: {health.error_count}")
+
+        if health.last_error:
+            output.append(f"\nLast Error: {health.last_error}")
+
+        return "\n".join(output)
+
+    return None
+
+
+async def handle_metrics_commands(command: str, orchestrator):
+    """Handle performance metrics commands"""
+    if not orchestrator or not orchestrator.performance_metrics:
+        return "❌ Performance metrics not available"
+
+    if command == ":metrics":
+        report = orchestrator.performance_metrics.get_summary_report()
+        return report
+
+    elif command == ":metrics comparative":
+        stats = orchestrator.performance_metrics.get_comparative_stats()
+
+        output = ["📊 COMPARATIVE PERFORMANCE", "=" * 60, ""]
+
+        if "overall" in stats:
+            output.append("Overall Statistics:")
+            output.append(f"  Avg Success Rate: {stats['overall']['avg_success_rate']:.1%}")
+            output.append(f"  Avg Duration: {stats['overall']['avg_duration']:.2f}s")
+            output.append(f"  Best Performer: {stats['overall']['best_performer']}")
+            output.append(f"  Fastest Agent: {stats['overall']['fastest_agent']}")
+            output.append("")
+
+        output.append("Per-Agent:")
+        for agent_id, data in stats['agents'].items():
+            output.append(f"  {agent_id:15} | Success: {data['success_rate']:5.1%} | Avg: {data['avg_duration']:5.2f}s")
+
+        return "\n".join(output)
+
+    elif command == ":metrics bottlenecks":
+        analysis = orchestrator.performance_metrics.get_bottleneck_analysis()
+
+        if not analysis["bottlenecks"]:
+            return "✅ No performance bottlenecks detected"
+
+        output = ["⚠️  PERFORMANCE BOTTLENECKS", "=" * 60, ""]
+
+        for bottleneck in analysis["bottlenecks"]:
+            output.append(f"{bottleneck['agent_id']}:")
+            for issue in bottleneck["issues"]:
+                output.append(f"  - {issue}")
+            output.append("")
+
+        return "\n".join(output)
+
+    return None
+
+async def handle_negotiation_commands(command: str, orchestrator):
+    """Handle negotiation commands"""
+    if not orchestrator or not orchestrator.negotiation_engine:
+        return "❌ Negotiation engine not available"
+
+    if command == ":negotiations":
+        stats = orchestrator.negotiation_engine.get_statistics()
+
+        output = ["🤝 NEGOTIATION STATISTICS", "=" * 60, ""]
+        output.append(f"Total Proposals: {stats['total_proposals']}")
+        output.append(f"Accepted: {stats['accepted']}")
+        output.append(f"Rejected: {stats['rejected']}")
+        output.append(f"Expired: {stats['expired']}")
+        output.append(f"Success Rate: {stats['success_rate']:.1%}")
+        output.append(f"Active: {stats['active_negotiations']}")
+        output.append("=" * 60)
+
+        return "\n".join(output)
+
+    return None
+
+async def handle_routing_commands(command: str, orchestrator):
+    """Handle message routing commands"""
+    if not orchestrator or not orchestrator.message_router:
+        return "❌ Message router not available"
+
+    if command == ":routing":
+        stats = orchestrator.message_router.get_routing_stats()
+
+        output = ["📡 MESSAGE ROUTING STATISTICS", "=" * 60, ""]
+        output.append(f"Total Routed: {stats['total_routed']}")
+        output.append(f"Failed Routes: {stats['failed_routes']}")
+        output.append(f"Retries: {stats['retries']}")
+        output.append(f"Timeouts: {stats['timeouts']}")
+        output.append(f"Pending: {stats['pending_messages']}")
+        output.append(f"Completed: {stats['completed_messages']}")
+        output.append("=" * 60)
+
+        return "\n".join(output)
+
+    elif command == ":routing queues":
+        status = orchestrator.message_router.get_queue_status()
+
+        if not status:
+            return "No queues active"
+
+        output = ["📬 MESSAGE QUEUE STATUS", "=" * 60, ""]
+
+        for agent_id, queue_data in status.items():
+            output.append(f"{agent_id}:")
+            output.append(f"  Queue Size: {queue_data['queue_size']}")
+            output.append(f"  Pending: {queue_data['pending']}")
+            output.append(f"  Critical: {queue_data['priorities']['critical']}")
+            output.append(f"  High: {queue_data['priorities']['high']}")
+            output.append(f"  Normal: {queue_data['priorities']['normal']}")
+            output.append("")
+
+        return "\n".join(output)
+
+    return None
 
 def is_command(text: str) -> bool:
     """Check if text is a command"""
@@ -137,6 +312,22 @@ async def handle_command(
         result = await handle_a2a_commands(command, orchestrator)
         if result:
             return (True, result, None, None)
+
+    # Health commands
+    if command.startswith(":health"):
+        return await handle_health_commands(command, orchestrator)
+
+    # Metrics commands
+    if command.startswith(":metrics"):
+        return await handle_metrics_commands(command, orchestrator)
+
+    # Negotiation commands
+    if command.startswith(":negotiations"):
+        return await handle_negotiation_commands(command, orchestrator)
+
+    # Routing commands
+    if command.startswith(":routing"):
+        return await handle_routing_commands(command, orchestrator)
 
     # Multi-agent commands
     if command.startswith(":multi"):
