@@ -233,20 +233,44 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
         self.logger.info("🔗 Initializing advanced A2A system...")
 
         # Start health monitoring
-        asyncio.create_task(self.health_monitor.start_monitoring())
+        asyncio.create_task(self.health_monitor.start_monitoring(check_interval=5.0))
+        self.logger.info("💚 Health monitoring started")
 
         # Message bus callback with routing
         async def message_bus(message: AgentMessage):
-            # Convert to MessageEnvelope and route
+            """Route messages through the advanced router"""
             from client.message_router import MessageEnvelope, MessagePriority
 
+            # Determine priority from message metadata
+            priority_map = {
+                "critical": MessagePriority.CRITICAL,
+                "high": MessagePriority.HIGH,
+                "normal": MessagePriority.NORMAL,
+                "low": MessagePriority.LOW,
+                "bulk": MessagePriority.BULK
+            }
+            priority = priority_map.get(
+                message.metadata.get("priority", "normal"),
+                MessagePriority.NORMAL
+            )
+
+            # Determine routing strategy
+            if message.to_agent:
+                strategy = RoutingStrategy.DIRECT
+            elif message.metadata.get("broadcast"):
+                strategy = RoutingStrategy.BROADCAST
+            elif message.metadata.get("load_balanced"):
+                strategy = RoutingStrategy.LOAD_BALANCED
+            else:
+                strategy = RoutingStrategy.DIRECT
+
             envelope = MessageEnvelope(
-                message_id=f"msg_{int(time.time() * 1000)}",
+                message_id=f"msg_{int(time.time() * 1000)}_{id(message)}",
                 from_agent=message.from_agent,
                 to_agent=message.to_agent,
                 content=message.content,
-                priority=MessagePriority.NORMAL,
-                routing_strategy=RoutingStrategy.DIRECT if message.to_agent else RoutingStrategy.BROADCAST,
+                priority=priority,
+                routing_strategy=strategy,
                 timestamp=message.timestamp or time.time(),
                 metadata=message.metadata
             )
@@ -270,6 +294,10 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             message_bus=message_bus
         )
 
+        # Register with systems
+        self.message_router.register_agent("orchestrator_1", self.a2a_agents["orchestrator"])
+        self.health_monitor.register_agent("orchestrator_1")
+
         # Specialized agents
         self.a2a_agents["researcher"] = ResearcherAgent(
             agent_id="researcher_1",
@@ -278,6 +306,8 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             logger=self.logger,
             message_bus=message_bus
         )
+        self.message_router.register_agent("researcher_1", self.a2a_agents["researcher"])
+        self.health_monitor.register_agent("researcher_1")
 
         self.a2a_agents["analyst"] = AnalystAgent(
             agent_id="analyst_1",
@@ -286,6 +316,8 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             logger=self.logger,
             message_bus=message_bus
         )
+        self.message_router.register_agent("analyst_1", self.a2a_agents["analyst"])
+        self.health_monitor.register_agent("analyst_1")
 
         self.a2a_agents["planner"] = PlannerAgent(
             agent_id="planner_1",
@@ -294,6 +326,8 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             logger=self.logger,
             message_bus=message_bus
         )
+        self.message_router.register_agent("planner_1", self.a2a_agents["planner"])
+        self.health_monitor.register_agent("planner_1")
 
         self.a2a_agents["writer"] = WriterAgent(
             agent_id="writer_1",
@@ -302,6 +336,8 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             logger=self.logger,
             message_bus=message_bus
         )
+        self.message_router.register_agent("writer_1", self.a2a_agents["writer"])
+        self.health_monitor.register_agent("writer_1")
 
         self.a2a_agents["plex_ingester"] = PlexIngesterAgent(
             agent_id="plex_ingester_1",
@@ -310,20 +346,29 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             logger=self.logger,
             message_bus=message_bus
         )
+        self.message_router.register_agent("plex_ingester_1", self.a2a_agents["plex_ingester"])
+        self.health_monitor.register_agent("plex_ingester_1")
 
         self.a2a_enabled = True
         self.logger.info(f"✅ A2A system initialized with {len(self.a2a_agents)} agents")
+        self.logger.info("✨ Advanced features: routing, health monitoring, metrics, negotiation")
 
     def disable_a2a(self):
-        """Disable A2A system"""
+        """Disable A2A system and cleanup"""
         self.a2a_enabled = False
+
+        # Stop health monitoring
+        if self.health_monitor:
+            asyncio.create_task(self.health_monitor.stop_monitoring())
+
+        # Cleanup agents
         self.a2a_agents.clear()
+
         self.logger.info("🔗 A2A system disabled")
 
     async def execute_a2a(self, user_request: str) -> str:
         """
-        Execute using A2A system
-        Agents communicate via messages instead of shared task queue
+        Execute using A2A system with advanced features
         """
         if not self.a2a_enabled:
             self.enable_a2a()
@@ -345,9 +390,27 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             if not subtasks:
                 # Simple task - use single agent
                 self.logger.info("📌 Simple task - using single A2A agent")
-                return await self._a2a_single_agent(user_request)
+                result = await self._a2a_single_agent(user_request)
 
-            # Step 2: Execute subtasks
+                # Record metrics for simple task
+                from client.performance_metrics import TaskMetrics
+                task_metrics = TaskMetrics(
+                    task_id=f"simple_{int(start_time)}",
+                    agent_id="single_agent",
+                    task_type="simple",
+                    start_time=start_time,
+                    end_time=time.time(),
+                    duration=time.time() - start_time,
+                    success=True,
+                    tools_used=[],
+                    llm_calls=1,
+                    tokens_used=0
+                )
+                self.performance_metrics.record_task(task_metrics)
+
+                return result
+
+            # Step 2: Execute subtasks with tracking
             self.logger.info(f"🎭 Executing {len(subtasks)} subtasks via A2A")
             results = {}
 
@@ -374,12 +437,59 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
                     results[task_id] = f"Agent {agent_role} not available"
                     continue
 
-                # Execute task
+                # Execute task with tracking
                 self.logger.info(f"▶️  Executing {task_id} with {agent_role}")
-                result = await agent.execute_task(description, context)
-                results[task_id] = result
+                task_start = time.time()
 
-                self.logger.info(f"✅ {task_id} completed")
+                try:
+                    result = await agent.execute_task(description, context)
+                    results[task_id] = result
+                    success = True
+                    error = None
+                    self.logger.info(f"✅ {task_id} completed")
+
+                except Exception as e:
+                    results[task_id] = f"Error: {str(e)}"
+                    success = False
+                    error = str(e)
+                    self.logger.error(f"❌ {task_id} failed: {e}")
+
+                    # Record error with health monitor
+                    self.health_monitor.record_error(agent.agent_id, error)
+
+                task_end = time.time()
+                task_duration = task_end - task_start
+
+                # Record performance metrics
+                from client.performance_metrics import TaskMetrics
+                task_metrics = TaskMetrics(
+                    task_id=task_id,
+                    agent_id=agent.agent_id,
+                    task_type=agent_role,
+                    start_time=task_start,
+                    end_time=task_end,
+                    duration=task_duration,
+                    success=success,
+                    tools_used=list(agent.tools.keys()) if hasattr(agent, 'tools') else [],
+                    llm_calls=1,
+                    tokens_used=0,
+                    error=error
+                )
+                self.performance_metrics.record_task(task_metrics)
+
+                # Record with health monitor
+                self.health_monitor.record_task_completion(
+                    agent.agent_id,
+                    task_duration,
+                    success
+                )
+
+                # Update resource usage
+                queue_size = len(agent.message_history) if hasattr(agent, 'message_history') else 0
+                self.health_monitor.update_resource_usage(
+                    agent.agent_id,
+                    queue_size=queue_size
+                )
 
             # Step 3: Aggregate results
             if is_stop_requested():
@@ -414,7 +524,41 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             agent = self.a2a_agents["researcher"]
 
         self.logger.info(f"📌 Using {agent.role} agent")
-        return await agent.execute_task(user_request)
+
+        # Execute with tracking
+        task_start = time.time()
+        try:
+            result = await agent.execute_task(user_request)
+            success = True
+            error = None
+        except Exception as e:
+            result = f"Error: {str(e)}"
+            success = False
+            error = str(e)
+            self.health_monitor.record_error(agent.agent_id, error)
+
+        task_duration = time.time() - task_start
+
+        # Record metrics
+        from client.performance_metrics import TaskMetrics
+        task_metrics = TaskMetrics(
+            task_id=f"single_{int(task_start)}",
+            agent_id=agent.agent_id,
+            task_type=agent.role,
+            start_time=task_start,
+            end_time=time.time(),
+            duration=task_duration,
+            success=success,
+            tools_used=list(agent.tools.keys()) if hasattr(agent, 'tools') else [],
+            llm_calls=1,
+            tokens_used=0,
+            error=error
+        )
+        self.performance_metrics.record_task(task_metrics)
+
+        self.health_monitor.record_task_completion(agent.agent_id, task_duration, success)
+
+        return result
 
     def _format_results(self, results: Dict[str, Any]) -> str:
         """Format partial results"""
@@ -425,19 +569,47 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
         return "\n".join(output)
 
     def get_a2a_status(self) -> Dict[str, Any]:
-        """Get A2A system status"""
+        """Get comprehensive A2A system status"""
         if not self.a2a_enabled:
             return {"enabled": False}
 
         agent_statuses = {}
         for name, agent in self.a2a_agents.items():
-            agent_statuses[name] = agent.get_status()
+            status = agent.get_status()
 
-        return {
+            # Add health info
+            health = self.health_monitor.get_agent_health(agent.agent_id)
+            if health:
+                status["health"] = {
+                    "status": health.status.value,
+                    "error_count": health.error_count,
+                    "avg_response_time": health.avg_response_time
+                }
+
+            # Add performance info
+            perf = self.performance_metrics.get_agent_performance(agent.agent_id)
+            if perf:
+                status["performance"] = {
+                    "total_tasks": perf.total_tasks,
+                    "success_rate": perf.successful_tasks / perf.total_tasks if perf.total_tasks > 0 else 0,
+                    "avg_duration": perf.avg_duration
+                }
+
+            agent_statuses[name] = status
+
+        status = {
             "enabled": True,
             "agents": agent_statuses,
             "message_queue_size": self.message_queue.qsize()
         }
+
+        # Add advanced system stats
+        status["routing"] = self.message_router.get_routing_stats()
+        status["health_summary"] = self.health_monitor.get_health_summary()
+        status["performance_summary"] = self.performance_metrics.get_comparative_stats()
+        status["negotiation_stats"] = self.negotiation_engine.get_statistics()
+
+        return status
 
     async def execute(self, user_request: str) -> str:
         """

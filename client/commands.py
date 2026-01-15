@@ -114,74 +114,108 @@ async def handle_multi_agent_commands(command: str, orchestrator, multi_agent_st
 
     return None
 
+
+# SAFE VERSION OF HEALTH COMMANDS - Replace in commands.py
+
 async def handle_health_commands(command: str, orchestrator):
     """Handle health monitoring commands"""
-    if not orchestrator or not orchestrator.health_monitor:
-        return "❌ Health monitoring not available"
+    if not orchestrator or not hasattr(orchestrator, 'health_monitor') or not orchestrator.health_monitor:
+        return (True, "❌ Health monitoring not available", None, None)
 
     if command == ":health":
         summary = orchestrator.health_monitor.get_health_summary()
 
+        # Handle empty/no agents case
+        if summary.get("status") == "no_agents" or not summary.get("total_agents"):
+            return (True, "❌ No agents registered yet. Enable A2A first with ':a2a on'", None, None)
+
         output = ["🏥 AGENT HEALTH SUMMARY", "=" * 60, ""]
-        output.append(f"Status: {summary['status'].upper()}")
-        output.append(f"Total Agents: {summary['total_agents']}")
-        output.append(f"  Healthy: {summary['healthy']} | Degraded: {summary['degraded']}")
-        output.append(f"  Unhealthy: {summary['unhealthy']} | Offline: {summary['offline']}")
+        output.append(f"Overall Status: {summary.get('status', 'unknown').upper()}")
+        output.append(f"Total Agents: {summary.get('total_agents', 0)}")
+        output.append(f"  💚 Healthy: {summary.get('healthy', 0)}")
+        output.append(f"  💛 Degraded: {summary.get('degraded', 0)}")
+        output.append(f"  🔴 Unhealthy: {summary.get('unhealthy', 0)}")
+        output.append(f"  ⚫ Offline: {summary.get('offline', 0)}")
         output.append("")
-        output.append(f"Total Tasks: {summary['total_tasks']}")
-        output.append(f"Total Errors: {summary['total_errors']}")
-        output.append(f"Avg Response Time: {summary['avg_response_time']:.2f}s")
-        output.append(f"Recent Alerts: {summary['recent_alerts']}")
+        output.append(f"Performance:")
+        output.append(f"  Total Tasks: {summary.get('total_tasks', 0)}")
+        output.append(f"  Total Errors: {summary.get('total_errors', 0)}")
+        output.append(f"  Avg Response Time: {summary.get('avg_response_time', 0):.2f}s")
+        output.append(f"  Recent Alerts (5min): {summary.get('recent_alerts', 0)}")
         output.append("=" * 60)
 
-        return "\n".join(output)
+        return (True, "\n".join(output), None, None)
 
     elif command == ":health alerts":
         alerts = orchestrator.health_monitor.get_recent_alerts(limit=10)
 
         if not alerts:
-            return "No recent alerts"
+            return (True, "✅ No recent alerts", None, None)
 
-        output = ["🚨 RECENT ALERTS", "=" * 60]
+        import time
+        output = ["🚨 RECENT ALERTS", "=" * 60, ""]
         for alert in alerts:
             output.append(f"{alert.level.value.upper()} | {alert.agent_id}")
             output.append(f"  {alert.message}")
             output.append(f"  {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(alert.timestamp))}")
             output.append("")
 
-        return "\n".join(output)
+        return (True, "\n".join(output), None, None)
 
     elif command.startswith(":health "):
         agent_id = command[8:].strip()
         health = orchestrator.health_monitor.get_agent_health(agent_id)
 
+        # Try with _1 suffix if not found
         if not health:
-            return f"❌ Agent {agent_id} not found"
+            health = orchestrator.health_monitor.get_agent_health(f"{agent_id}_1")
+            if health:
+                agent_id = f"{agent_id}_1"
 
-        output = [f"🏥 HEALTH: {agent_id}", "=" * 60, ""]
-        output.append(f"Status: {health.status.value.upper()}")
+        if not health:
+            return (True,
+                    f"❌ Agent '{agent_id}' not found. Available agents: {', '.join(orchestrator.health_monitor.agent_metrics.keys())}",
+                    None, None)
+
+        import time
+        status_icon = {"healthy": "💚", "degraded": "💛", "unhealthy": "🔴", "offline": "⚫"}.get(health.status.value, "❓")
+
+        output = [f"🏥 HEALTH REPORT: {agent_id}", "=" * 60, ""]
+        output.append(f"Status: {status_icon} {health.status.value.upper()}")
         output.append(f"Uptime: {health.uptime / 60:.1f} minutes")
-        output.append(f"Tasks: {health.tasks_completed} completed, {health.tasks_failed} failed")
-        output.append(f"Avg Response: {health.avg_response_time:.2f}s")
-        output.append(f"Queue Size: {health.queue_size}")
-        output.append(f"Error Count: {health.error_count}")
+        output.append(f"Last Heartbeat: {time.time() - health.last_heartbeat:.1f}s ago")
+        output.append("")
+        output.append(f"Tasks:")
+        output.append(f"  Completed: {health.tasks_completed}")
+        output.append(f"  Failed: {health.tasks_failed}")
+        if health.tasks_completed + health.tasks_failed > 0:
+            success_rate = health.tasks_completed / (health.tasks_completed + health.tasks_failed)
+            output.append(f"  Success Rate: {success_rate:.1%}")
+        output.append("")
+        output.append(f"Performance:")
+        output.append(f"  Avg Response Time: {health.avg_response_time:.2f}s")
+        output.append(f"  Queue Size: {health.queue_size}")
+        output.append(f"  Error Count: {health.error_count}")
 
         if health.last_error:
             output.append(f"\nLast Error: {health.last_error}")
+            if health.last_error_time:
+                output.append(f"  {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(health.last_error_time))}")
 
-        return "\n".join(output)
+        output.append("=" * 60)
 
-    return None
+        return (True, "\n".join(output), None, None)
 
+    return (False, None, None, None)
 
 async def handle_metrics_commands(command: str, orchestrator):
     """Handle performance metrics commands"""
     if not orchestrator or not orchestrator.performance_metrics:
-        return "❌ Performance metrics not available"
+        return (True, "❌ Performance metrics not available", None, None)
 
     if command == ":metrics":
         report = orchestrator.performance_metrics.get_summary_report()
-        return report
+        return (True, report, None, None)
 
     elif command == ":metrics comparative":
         stats = orchestrator.performance_metrics.get_comparative_stats()
@@ -200,13 +234,13 @@ async def handle_metrics_commands(command: str, orchestrator):
         for agent_id, data in stats['agents'].items():
             output.append(f"  {agent_id:15} | Success: {data['success_rate']:5.1%} | Avg: {data['avg_duration']:5.2f}s")
 
-        return "\n".join(output)
+        return (True, "\n".join(output), None, None)
 
     elif command == ":metrics bottlenecks":
         analysis = orchestrator.performance_metrics.get_bottleneck_analysis()
 
         if not analysis["bottlenecks"]:
-            return "✅ No performance bottlenecks detected"
+            return (True, "✅ No performance bottlenecks detected", None, None)
 
         output = ["⚠️  PERFORMANCE BOTTLENECKS", "=" * 60, ""]
 
@@ -216,14 +250,14 @@ async def handle_metrics_commands(command: str, orchestrator):
                 output.append(f"  - {issue}")
             output.append("")
 
-        return "\n".join(output)
+        return (True, "\n".join(output), None, None)
 
-    return None
+    return (False, None, None, None)
 
 async def handle_negotiation_commands(command: str, orchestrator):
     """Handle negotiation commands"""
     if not orchestrator or not orchestrator.negotiation_engine:
-        return "❌ Negotiation engine not available"
+        return (True, "❌ Negotiation engine not available", None, None)
 
     if command == ":negotiations":
         stats = orchestrator.negotiation_engine.get_statistics()
@@ -237,14 +271,14 @@ async def handle_negotiation_commands(command: str, orchestrator):
         output.append(f"Active: {stats['active_negotiations']}")
         output.append("=" * 60)
 
-        return "\n".join(output)
+        return (True, "\n".join(output), None, None)
 
-    return None
+    return (False, None, None, None)
 
 async def handle_routing_commands(command: str, orchestrator):
     """Handle message routing commands"""
     if not orchestrator or not orchestrator.message_router:
-        return "❌ Message router not available"
+        return (True, "❌ Message router not available", None, None)
 
     if command == ":routing":
         stats = orchestrator.message_router.get_routing_stats()
@@ -258,13 +292,13 @@ async def handle_routing_commands(command: str, orchestrator):
         output.append(f"Completed: {stats['completed_messages']}")
         output.append("=" * 60)
 
-        return "\n".join(output)
+        return (True, "\n".join(output), None, None)
 
     elif command == ":routing queues":
         status = orchestrator.message_router.get_queue_status()
 
         if not status:
-            return "No queues active"
+            return (True, "No queues active", None, None)
 
         output = ["📬 MESSAGE QUEUE STATUS", "=" * 60, ""]
 
@@ -277,9 +311,9 @@ async def handle_routing_commands(command: str, orchestrator):
             output.append(f"  Normal: {queue_data['priorities']['normal']}")
             output.append("")
 
-        return "\n".join(output)
+        return (True, "\n".join(output), None, None)
 
-    return None
+    return (False, None, None, None)
 
 def is_command(text: str) -> bool:
     """Check if text is a command"""
@@ -315,19 +349,27 @@ async def handle_command(
 
     # Health commands
     if command.startswith(":health"):
-        return await handle_health_commands(command, orchestrator)
+        result = await handle_health_commands(command, orchestrator)
+        if result[0]:  # If handled
+            return result
 
     # Metrics commands
     if command.startswith(":metrics"):
-        return await handle_metrics_commands(command, orchestrator)
+        result = await handle_metrics_commands(command, orchestrator)
+        if result[0]:  # If handled
+            return result
 
     # Negotiation commands
     if command.startswith(":negotiations"):
-        return await handle_negotiation_commands(command, orchestrator)
+        result = await handle_negotiation_commands(command, orchestrator)
+        if result[0]:  # If handled
+            return result
 
     # Routing commands
     if command.startswith(":routing"):
-        return await handle_routing_commands(command, orchestrator)
+        result = await handle_routing_commands(command, orchestrator)
+        if result[0]:  # If handled
+            return result
 
     # Multi-agent commands
     if command.startswith(":multi"):
