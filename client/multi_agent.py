@@ -1,6 +1,7 @@
 """
 Multi-Agent Execution System (Updated for LangChain 1.2.0)
 Uses LangChain create_agent for tool execution
+NOW WITH COMPREHENSIVE STOP SIGNAL HANDLING
 """
 
 import asyncio
@@ -9,20 +10,9 @@ import time
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
-
+from .stop_signal import is_stop_requested, clear_stop, get_stop_status
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain.agents import create_agent
-
-# Import stop signal
-try:
-    from client.stop_signal import is_stop_requested, clear_stop
-except ImportError:
-    # Fallback if stop_signal not available
-    def is_stop_requested():
-        return False
-    def clear_stop():
-        pass
-
 
 class AgentRole(Enum):
     """Defines different agent specializations"""
@@ -56,7 +46,7 @@ class AgentTask:
 class MultiAgentOrchestrator:
     """
     Orchestrates multiple specialized agents with PROPER tool execution
-    Updated for LangChain 1.2.0
+    Updated for LangChain 1.2.0 WITH STOP SIGNAL HANDLING
     """
 
     def __init__(self, base_llm, tools, logger: logging.Logger):
@@ -215,7 +205,10 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
         return available_tools
 
     async def execute(self, user_request: str) -> str:
-        """Main entry point for multi-agent execution"""
+        """
+        Main entry point for multi-agent execution
+        NOW WITH STOP SIGNAL HANDLING
+        """
 
         self.logger.info(f"🎭 Multi-agent execution started: {user_request}")
         start_time = time.time()
@@ -224,12 +217,23 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
             # Step 1: Create execution plan
             plan = await self._create_execution_plan(user_request)
 
+            # Check stop after planning
+            if is_stop_requested():
+                self.logger.warning("🛑 Stop requested after creating plan - aborting execution")
+                return "Execution stopped by user before tasks could begin."
+
             if not plan:
                 self.logger.info("📊 Simple query detected, falling back to single agent")
                 return await self._fallback_single_agent(user_request)
 
             # Step 2: Execute tasks
             results = await self._execute_tasks(plan)
+
+            # Check if execution was stopped
+            if results.get("_stopped", False):
+                stopped_message = results.get("_stopped_message", "Stopped by user")
+                self.logger.warning(f"🛑 Multi-agent execution stopped: {stopped_message}")
+                return f"🛑 **Execution stopped:** {stopped_message}"
 
             # Step 3: Aggregate results
             final_response = await self._aggregate_results(user_request, results)
@@ -249,6 +253,11 @@ CRITICAL: Never make up item IDs! Only use IDs returned by plex_find_unprocessed
         """Use orchestrator to create execution plan"""
 
         self.logger.info("📋 Creating execution plan...")
+
+        # Check stop before planning
+        if is_stop_requested():
+            self.logger.warning("🛑 Stop requested - skipping plan creation")
+            return None
 
         # Orchestrator has no tools, use base LLM
         planning_prompt = f"""Given this user request: "{user_request}"
@@ -329,7 +338,10 @@ If this is a simple task that doesn't need multiple agents, respond with:
             return None
 
     async def _execute_tasks(self, tasks: List[AgentTask]) -> Dict[str, Any]:
-        """Execute tasks respecting dependencies"""
+        """
+        Execute tasks respecting dependencies
+        WITH COMPREHENSIVE STOP SIGNAL CHECKING
+        """
 
         self.logger.info(f"⚙️ Executing {len(tasks)} tasks...")
 
@@ -337,9 +349,11 @@ If this is a simple task that doesn't need multiple agents, respond with:
         results = {}
 
         while len(completed) < len(tasks):
-            # CHECK STOP SIGNAL
+            # ═══════════════════════════════════════════════════════════
+            # CHECK STOP SIGNAL BEFORE EACH BATCH OF TASKS
+            # ═══════════════════════════════════════════════════════════
             if is_stop_requested():
-                self.logger.warning(f"🛑 Multi-agent execution stopped by user after {len(completed)}/{len(tasks)} tasks")
+                self.logger.warning(f"🛑 Multi-agent execution stopped after {len(completed)}/{len(tasks)} tasks")
                 results["_stopped"] = True
                 results["_stopped_message"] = f"Stopped after completing {len(completed)} of {len(tasks)} tasks"
                 break
@@ -373,10 +387,30 @@ If this is a simple task that doesn't need multiple agents, respond with:
 
                 completed.add(task.task_id)
 
+            # ═══════════════════════════════════════════════════════════
+            # CHECK STOP SIGNAL AFTER COMPLETING BATCH
+            # ═══════════════════════════════════════════════════════════
+            if is_stop_requested():
+                self.logger.warning(f"🛑 Stop detected after batch completion")
+                results["_stopped"] = True
+                results["_stopped_message"] = f"Stopped after completing {len(completed)} of {len(tasks)} tasks"
+                break
+
         return results
 
     async def _execute_single_task(self, task: AgentTask, previous_results: Dict) -> str:
-        """Execute a single agent task WITH TOOL EXECUTION"""
+        """
+        Execute a single agent task WITH TOOL EXECUTION
+        NOW WITH STOP SIGNAL CHECK BEFORE EXECUTION
+        """
+
+        # ═══════════════════════════════════════════════════════════
+        # CHECK STOP BEFORE STARTING TASK
+        # ═══════════════════════════════════════════════════════════
+        if is_stop_requested():
+            self.logger.warning(f"🛑 Task {task.task_id} ({task.role.value}) stopped before execution")
+            task.status = "stopped"
+            return f"Task stopped before execution"
 
         task.status = "running"
         task.start_time = time.time()
@@ -416,6 +450,15 @@ Complete this task using your available tools."""
                 # Invoke agent with messages
                 result = await agent.ainvoke({"messages": messages})
 
+                # ═══════════════════════════════════════════════════════════
+                # CHECK STOP AFTER AGENT EXECUTION
+                # ═══════════════════════════════════════════════════════════
+                if is_stop_requested():
+                    self.logger.warning(f"🛑 Task {task.task_id} stopped after agent execution")
+                    task.status = "stopped"
+                    task.end_time = time.time()
+                    return f"Task stopped after execution"
+
                 # Extract output from last message
                 last_message = result["messages"][-1]
                 output = last_message.content if hasattr(last_message, 'content') else str(last_message)
@@ -451,8 +494,21 @@ Complete this task using your available tools."""
 
         self.logger.info("📊 Aggregating results...")
 
+        # Check if any results indicate stop
+        if results.get("_stopped", False):
+            return results.get("_stopped_message", "Execution stopped")
+
+        # Check stop before aggregation
+        if is_stop_requested():
+            self.logger.warning("🛑 Stop requested - skipping result aggregation")
+            return "Result aggregation stopped by user."
+
         results_summary = ""
         for task_id, result in results.items():
+            # Skip metadata keys
+            if task_id.startswith("_"):
+                continue
+
             task = self.tasks.get(task_id)
             if task:
                 results_summary += f"\n\n### {task.role.value.title()} ({task_id}):\n{result}"
@@ -476,6 +532,11 @@ Focus on clarity and completeness."""
         """Fallback to single agent with tool execution"""
 
         self.logger.info("🔄 Using single-agent fallback mode")
+
+        # Check stop before fallback
+        if is_stop_requested():
+            self.logger.warning("🛑 Stop requested - skipping single-agent fallback")
+            return "Single-agent execution stopped by user."
 
         # Choose best agent based on keywords
         request_lower = user_request.lower()
@@ -509,6 +570,12 @@ Focus on clarity and completeness."""
             ]
 
             result = await agent.ainvoke({"messages": messages})
+
+            # Check stop after execution
+            if is_stop_requested():
+                self.logger.warning("🛑 Single-agent execution stopped")
+                return "Single-agent execution stopped by user."
+
             last_message = result["messages"][-1]
             return last_message.content if hasattr(last_message, 'content') else str(last_message)
         else:
@@ -522,8 +589,6 @@ Focus on clarity and completeness."""
 
 async def should_use_multi_agent(user_request: str) -> bool:
     """Determine if a request should use multi-agent execution"""
-
-    print(f"DEBUG: Checking multi-agent for: {user_request}")  # Debug output
 
     import logging
     logger = logging.getLogger("mcp_client")
@@ -541,7 +606,6 @@ async def should_use_multi_agent(user_request: str) -> bool:
     for indicator in multi_step_indicators:
         if re.search(indicator, request_lower):
             logger.info(f"✅ Multi-agent triggered by: {indicator}")
-            print(f"DEBUG: Multi-agent triggered by: {indicator}")
             return True
 
     complex_keywords = [
@@ -551,14 +615,11 @@ async def should_use_multi_agent(user_request: str) -> bool:
 
     if any(keyword in request_lower for keyword in complex_keywords):
         logger.info(f"✅ Multi-agent triggered by keyword")
-        print(f"DEBUG: Multi-agent triggered by keyword")
         return True
 
     if len(user_request.split()) > 30:
         logger.info(f"✅ Multi-agent triggered by length: {len(user_request.split())} words")
-        print(f"DEBUG: Multi-agent triggered by length")
         return True
 
     logger.info(f"❌ Multi-agent NOT triggered")
-    print(f"DEBUG: Multi-agent NOT triggered")
     return False

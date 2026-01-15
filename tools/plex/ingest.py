@@ -1,6 +1,7 @@
 """
 Plex Ingestion Tool
 Ingests Plex media subtitles into RAG database with parallelization
+NOW WITH COMPREHENSIVE STOP SIGNAL HANDLING
 """
 
 import json
@@ -8,18 +9,11 @@ import logging
 import asyncio
 import time
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple
 from tools.rag.rag_storage import check_if_ingested, mark_as_ingested, get_ingestion_stats
-
-# Import stop signal
-try:
-    from client.stop_signal import is_stop_requested, clear_stop
-except ImportError:
-    # Fallback if stop_signal not available
-    def is_stop_requested():
-        return False
-    def clear_stop():
-        pass
+from tools.rag.rag_add import rag_add
+from client.stop_signal import is_stop_requested, clear_stop, get_stop_status
+from .plex_utils import stream_all_media, extract_metadata, stream_subtitles, chunk_stream
 
 logger = logging.getLogger("mcp_server")
 
@@ -27,14 +21,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PROGRESS_FILE = PROJECT_ROOT / "data" / "plex_ingest_progress.json"
 PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-# Import Plex utilities
-from .plex_utils import stream_all_media, extract_metadata, stream_subtitles, chunk_stream
-
-# Import RAG add function
-from tools.rag.rag_add import rag_add
-
 # Conservative concurrency limit (safe for most systems)
-CONCURRENT_LIMIT = 3  # Process 3 items at a time
+# Set to 1 for maximum stop responsiveness (checks between each item)
+# Set to 3 for faster processing (checks every 3 items)
+CONCURRENT_LIMIT = 1  # Process 1 item at a time for quick stop response
 
 
 def load_progress() -> Dict[str, bool]:
@@ -76,6 +66,11 @@ def find_unprocessed_items(limit: int, rescan_no_subtitles: bool = False) -> Lis
     logger.info(f"🔍 Finding {limit} unprocessed items (rescan: {rescan_no_subtitles})")
 
     for media_item in stream_all_media():
+        # CHECK STOP SIGNAL during search
+        if is_stop_requested():
+            logger.warning(f"🛑 Stop requested during search after checking {checked_count} items")
+            break
+
         media_id = str(media_item["id"])
         title = media_item["title"]
 
@@ -100,6 +95,10 @@ def find_unprocessed_items(limit: int, rescan_no_subtitles: bool = False) -> Lis
 def extract_subtitles_for_item(media_item: Dict[str, Any]) -> Tuple[str, str, List[str], str]:
     """
     STEP 2: Extract subtitles for a single item (parallelizable)
+
+    NOTE: This function is BLOCKING and runs in a thread pool.
+    It CANNOT be interrupted mid-execution.
+    Stop checks happen BEFORE and AFTER this function is called.
 
     Args:
         media_item: Media item dictionary
@@ -135,6 +134,9 @@ def ingest_item_to_rag(
     """
     STEP 3: Ingest a single item's subtitles into RAG (parallelizable)
 
+    NOTE: This function is BLOCKING and runs in a thread pool.
+    However, it checks stop signal before EACH CHUNK for responsiveness.
+
     Args:
         media_id: Plex media ID
         title: Media title
@@ -160,8 +162,23 @@ def ingest_item_to_rag(
     # Chunk and add to RAG
     chunks_added = 0
     word_count = 0
+    chunk_count = 0
 
     for chunk in chunk_stream(iter(subtitle_lines), chunk_size=1600):
+        # CHECK STOP BEFORE EACH CHUNK (every ~3-5 seconds)
+        if is_stop_requested():
+            logger.warning(f"🛑 Stopped during RAG ingestion of {title} after {chunk_count} chunks")
+            mark_as_ingested(media_id, status="partial")
+            return {
+                "title": title,
+                "id": media_id,
+                "subtitle_chunks": chunks_added,
+                "subtitle_word_count": word_count,
+                "status": "stopped",
+                "reason": f"Stopped during ingestion after {chunks_added} chunks"
+            }
+
+        chunk_count += 1
         result = rag_add(
             text=chunk,
             source=f"plex:{media_id}:{title}",
@@ -174,6 +191,19 @@ def ingest_item_to_rag(
     # Store metadata separately
     metadata_summary = f"{title} - {metadata_text}"
     if len(metadata_summary) < 1600:
+        # Final stop check before metadata
+        if is_stop_requested():
+            logger.warning(f"🛑 Stopped before adding metadata for {title}")
+            mark_as_ingested(media_id, status="partial")
+            return {
+                "title": title,
+                "id": media_id,
+                "subtitle_chunks": chunks_added,
+                "subtitle_word_count": word_count,
+                "status": "stopped",
+                "reason": f"Stopped before metadata (ingested {chunks_added} chunks)"
+            }
+
         try:
             result = rag_add(
                 text=metadata_summary,
@@ -199,12 +229,13 @@ def ingest_item_to_rag(
 
 
 # ============================================================================
-# ASYNC PARALLELIZATION (3 concurrent items at a time)
+# ASYNC PARALLELIZATION WITH COMPREHENSIVE STOP CHECKS
 # ============================================================================
 
 async def process_item_async(media_item: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process a single item asynchronously (extract + ingest)
+    With stop checks BEFORE and AFTER each blocking operation
 
     Args:
         media_item: Media item to process
@@ -215,20 +246,67 @@ async def process_item_async(media_item: Dict[str, Any]) -> Dict[str, Any]:
     loop = asyncio.get_event_loop()
 
     try:
-        # Run extraction in thread pool (blocking I/O)
+        title = media_item.get("title", "Unknown")
+        media_id = str(media_item.get("id", "Unknown"))
+
+        # ═══════════════════════════════════════════════════════════
+        # STOP CHECK #1: Before starting extraction
+        # ═══════════════════════════════════════════════════════════
+        if is_stop_requested():
+            logger.warning(f"🛑 [STOP CHECK #1] Stopped before extracting: {title}")
+            return {
+                "title": title,
+                "id": media_id,
+                "status": "stopped",
+                "reason": "Stopped before extraction"
+            }
+
+        logger.info(f"📥 Starting extraction for: {title}")
+        extraction_start = time.time()
+
+        # Run extraction in thread pool (BLOCKING - cannot interrupt mid-extraction)
         media_id, title, subtitle_lines, metadata_text = await loop.run_in_executor(
             None, extract_subtitles_for_item, media_item
         )
 
-        # Run ingestion in thread pool (blocking I/O)
+        extraction_duration = time.time() - extraction_start
+        logger.info(f"✅ Extraction complete for: {title} ({extraction_duration:.1f}s)")
+
+        # ═══════════════════════════════════════════════════════════
+        # STOP CHECK #2: After extraction, before ingestion
+        # ═══════════════════════════════════════════════════════════
+        if is_stop_requested():
+            logger.warning(f"🛑 [STOP CHECK #2] Stopped after extraction, before ingestion: {title}")
+            return {
+                "title": title,
+                "id": media_id,
+                "status": "stopped",
+                "reason": "Stopped after extraction, before ingestion"
+            }
+
+        logger.info(f"💾 Starting ingestion for: {title}")
+        ingestion_start = time.time()
+
+        # Run ingestion in thread pool (BLOCKING but has internal stop checks per chunk)
         result = await loop.run_in_executor(
             None, ingest_item_to_rag, media_id, title, subtitle_lines, metadata_text
         )
+
+        ingestion_duration = time.time() - ingestion_start
+        logger.info(f"✅ Ingestion complete for: {title} ({ingestion_duration:.1f}s)")
+
+        # ═══════════════════════════════════════════════════════════
+        # STOP CHECK #3: After ingestion (check if it was stopped internally)
+        # ═══════════════════════════════════════════════════════════
+        if result.get("status") == "stopped":
+            logger.warning(f"🛑 [STOP CHECK #3] Ingestion was stopped internally: {title}")
 
         return result
 
     except Exception as e:
         logger.error(f"❌ Failed to process item: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "title": media_item.get("title", "Unknown"),
             "id": str(media_item.get("id", "Unknown")),
@@ -239,7 +317,12 @@ async def process_item_async(media_item: Dict[str, Any]) -> Dict[str, Any]:
 
 async def ingest_batch_parallel_conservative(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Process items in small parallel batches (CONSERVATIVE: 3 at a time)
+    Process items in small parallel batches with comprehensive stop handling
+
+    STOP CHECKS:
+    - Before each batch starts
+    - After each item completes (via process_item_async)
+    - If any item returns "stopped" status, entire batch stops
 
     Args:
         items: List of media items to process
@@ -255,13 +338,21 @@ async def ingest_batch_parallel_conservative(items: List[Dict[str, Any]]) -> Lis
 
     # Process in batches
     for batch_num, i in enumerate(range(0, total_items, CONCURRENT_LIMIT), 1):
-        # CHECK STOP SIGNAL BEFORE EACH BATCH
+        # ═══════════════════════════════════════════════════════════
+        # STOP CHECK: Before each batch
+        # ═══════════════════════════════════════════════════════════
         if is_stop_requested():
-            logger.warning(f"🛑 Ingestion stopped by user after processing {len(results)} items")
+            items_processed = len(results)
+            items_remaining = total_items - items_processed
+
+            logger.warning(f"🛑 [BATCH STOP] Ingestion stopped after processing {items_processed}/{total_items} items")
+
+            # Add stop indicator to results
             results.append({
-                "status": "stopped",
-                "message": f"Stopped after {len(results)} items",
-                "items_remaining": total_items - len(results)
+                "status": "batch_stopped",
+                "title": "Batch Stopped",
+                "message": f"Stopped after {items_processed} items",
+                "items_remaining": items_remaining
             })
             break
 
@@ -278,9 +369,11 @@ async def ingest_batch_parallel_conservative(items: List[Dict[str, Any]]) -> Lis
         )
 
         batch_duration = time.time() - batch_start
-        logger.info(f"✅ Batch {batch_num} completed in {batch_duration:.2f}s ({batch_size / batch_duration:.2f} items/sec)")
+        logger.info(f"✅ Batch {batch_num} completed in {batch_duration:.2f}s")
 
-        # Handle results
+        # Handle results and check for stop status
+        batch_was_stopped = False
+
         for result in batch_results:
             if isinstance(result, Exception):
                 logger.error(f"❌ Batch task failed: {result}")
@@ -291,9 +384,20 @@ async def ingest_batch_parallel_conservative(items: List[Dict[str, Any]]) -> Lis
             else:
                 results.append(result)
 
-        # Brief pause between batches to be kind to the Plex server
+                # If this item was stopped, stop the entire batch
+                if result.get("status") == "stopped":
+                    logger.warning(f"🛑 [ITEM STOP] Item '{result.get('title')}' was stopped - ending batch")
+                    batch_was_stopped = True
+
+        # If any item was stopped, don't continue to next batch
+        if batch_was_stopped:
+            items_remaining = total_items - len(results)
+            logger.warning(f"🛑 Batch ending early - {items_remaining} items not processed")
+            break
+
+        # Brief pause between batches (gives stop check opportunity + kind to Plex server)
         if i + CONCURRENT_LIMIT < total_items:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)  # Quick check interval
 
     overall_duration = time.time() - overall_start
     avg_rate = len(results) / overall_duration if overall_duration > 0 else 0
@@ -311,6 +415,13 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
     """
     Ingest the next batch of unprocessed Plex items into RAG (ASYNC)
 
+    NOW WITH COMPREHENSIVE STOP SIGNAL HANDLING:
+    - Clears stop signal at start
+    - Checks stop during item search
+    - Checks stop before/after each item
+    - Checks stop between batches
+    - Reports stop status in results
+
     IMPORTANT: This is an async function that works with async MCP servers.
     Do NOT wrap it in asyncio.run() - just await it directly!
 
@@ -319,20 +430,34 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
         rescan_no_subtitles: If True, re-check items that previously had no subtitles
 
     Returns:
-        Dictionary with ingestion results
+        Dictionary with ingestion results (includes "stopped" flag if stopped)
     """
     try:
-        # Clear stop signal at start
-        clear_stop()
-
+        # ═══════════════════════════════════════════════════════════
+        # NOTE: Do NOT clear stop here - let user's stop request persist!
+        # Stop is cleared at the START of each user request in run_agent()
+        # ═══════════════════════════════════════════════════════════
         logger.info(f"📥 Starting PARALLEL batch ingestion (limit: {limit}, rescan: {rescan_no_subtitles})")
         overall_start = time.time()
 
-        # STEP 1: Find unprocessed items (synchronous, fast)
+        # STEP 1: Find unprocessed items (with stop checks)
         loop = asyncio.get_event_loop()
         unprocessed_items = await loop.run_in_executor(
             None, find_unprocessed_items, limit, rescan_no_subtitles
         )
+
+        # Check if search was stopped
+        if is_stop_requested():
+            logger.warning("🛑 Search was stopped - returning early")
+            return {
+                "ingested": [],
+                "skipped": [],
+                "stopped": True,
+                "stop_reason": "Stopped during item search",
+                "items_processed": 0,
+                "duration": time.time() - overall_start,
+                "mode": "parallel"
+            }
 
         if not unprocessed_items:
             logger.info("✅ No unprocessed items found")
@@ -340,6 +465,7 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
             return {
                 "ingested": [],
                 "skipped": [],
+                "stopped": False,
                 "stats": {
                     "total_items": stats["total_items"],
                     "successfully_ingested": stats["successfully_ingested"],
@@ -352,7 +478,7 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
                 "mode": "parallel"
             }
 
-        # STEP 2 & 3: Extract and ingest IN PARALLEL (3 at a time)
+        # STEP 2 & 3: Extract and ingest IN PARALLEL (with comprehensive stop checks)
         logger.info(f"🚀 Processing {len(unprocessed_items)} items in parallel batches of {CONCURRENT_LIMIT}...")
 
         results = await ingest_batch_parallel_conservative(unprocessed_items)
@@ -361,24 +487,35 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
         ingested_items = []
         skipped_items = []
         was_stopped = False
+        stop_reason = None
 
         for result in results:
-            if result.get("status") == "success":
+            status = result.get("status")
+
+            if status == "success":
                 ingested_items.append(result)
-            elif result.get("status") == "stopped":
+            elif status == "stopped":
                 was_stopped = True
+                stop_reason = result.get("reason", "Stopped by user")
                 skipped_items.append({
-                    "title": "Operation Stopped",
-                    "reason": result.get("message", "Stopped by user"),
+                    "title": result.get("title", "Unknown"),
+                    "reason": result.get("reason", "Stopped")
+                })
+            elif status == "batch_stopped":
+                was_stopped = True
+                stop_reason = result.get("message", "Batch stopped by user")
+                skipped_items.append({
+                    "title": "Batch Stopped",
+                    "reason": result.get("message", "Stopped"),
                     "items_remaining": result.get("items_remaining", 0)
                 })
-            elif result.get("status") == "no_subtitles":
+            elif status == "no_subtitles":
                 skipped_items.append({
                     "title": result["title"],
                     "id": result["id"],
                     "reason": result.get("reason", "No subtitles found")
                 })
-            elif result.get("status") == "error":
+            elif status == "error":
                 skipped_items.append({
                     "title": result.get("title", "Unknown"),
                     "id": result.get("id", "Unknown"),
@@ -388,12 +525,13 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
         # Get total stats
         stats = get_ingestion_stats()
         overall_duration = time.time() - overall_start
-        items_processed = len(ingested_items) + len([s for s in skipped_items if s.get("title") != "Operation Stopped"])
+        items_processed = len(ingested_items) + len([s for s in skipped_items if s.get("title") != "Batch Stopped"])
 
         result = {
             "ingested": ingested_items,
             "skipped": skipped_items,
             "stopped": was_stopped,
+            "stop_reason": stop_reason,
             "stats": {
                 "total_items": stats["total_items"],
                 "successfully_ingested": stats["successfully_ingested"],
@@ -408,10 +546,13 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
             "average_rate": round(items_processed / overall_duration, 2) if overall_duration > 0 else 0
         }
 
+        # Log final status
         if was_stopped:
             logger.warning(f"🛑 Parallel batch STOPPED by user:")
+            logger.warning(f"   - Reason: {stop_reason}")
         else:
             logger.info(f"📊 Parallel batch complete:")
+
         logger.info(f"   - Items processed: {items_processed}")
         logger.info(f"   - Ingested: {len(ingested_items)}")
         logger.info(f"   - Skipped: {len(skipped_items)}")
@@ -425,4 +566,19 @@ async def ingest_next_batch(limit: int = 5, rescan_no_subtitles: bool = False) -
         logger.error(f"❌ Parallel ingestion error: {e}")
         import traceback
         traceback.print_exc()
-        return {"error": str(e), "mode": "parallel"}
+
+        # Check if this was due to a stop
+        stop_status = get_stop_status()
+        if stop_status["is_stopped"]:
+            return {
+                "error": "Stopped during execution",
+                "stopped": True,
+                "stop_reason": str(e),
+                "mode": "parallel"
+            }
+
+        return {
+            "error": str(e),
+            "stopped": False,
+            "mode": "parallel"
+        }

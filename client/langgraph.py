@@ -1,5 +1,5 @@
 """
-LangGraph Module with Metrics Tracking
+LangGraph Module with Metrics Tracking AND STOP SIGNAL HANDLING
 Handles LangGraph agent creation, routing, and execution with performance metrics
 """
 
@@ -7,21 +7,11 @@ import json
 import logging
 import operator
 import time
-from typing import TypedDict, Annotated, Sequence, Optional
-
+from typing import TypedDict, Annotated, Sequence
+from .stop_signal import is_stop_requested, clear_stop
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-
-# Import stop signal
-try:
-    from client.stop_signal import is_stop_requested, clear_stop
-except ImportError:
-    # Fallback if stop_signal not available
-    def is_stop_requested():
-        return False
-    def clear_stop():
-        pass
 
 # Try to import metrics, but don't fail if not available
 try:
@@ -54,20 +44,38 @@ class AgentState(TypedDict):
     tools: dict
     llm: object
     ingest_completed: bool
+    stopped: bool  # NEW: Track if execution was stopped
 
 
 def router(state):
-    """Route based on what the agent decided to do"""
+    """
+    Route based on what the agent decided to do
+    NOW WITH STOP SIGNAL HANDLING
+    """
     last_message = state["messages"][-1]
 
     logger = logging.getLogger("mcp_client")
-    logger.info(f"🎯 Router: Last message type = {type(last_message).__name__}")
+    logger.debug(f"🎯 Router: Last message type = {type(last_message).__name__}")
+
+    # ═══════════════════════════════════════════════════════════
+    # PRIORITY CHECK: Stop signal (highest priority)
+    # ═══════════════════════════════════════════════════════════
+    if is_stop_requested():
+        logger.warning(f"🛑 Router: Stop requested - ending graph execution")
+        # Mark state as stopped
+        state["stopped"] = True
+        return "continue"  # Go to END
+
+    # Check if already marked as stopped in state
+    if state.get("stopped", False):
+        logger.warning(f"🛑 Router: Execution already stopped - ending")
+        return "continue"
 
     # If LLM made tool calls, execute them first
     if isinstance(last_message, AIMessage):
         tool_calls = getattr(last_message, "tool_calls", [])
         if tool_calls and len(tool_calls) > 0:
-            logger.info(f"🎯 Router: Found {len(tool_calls)} tool calls - routing to TOOLS")
+            logger.debug(f"🎯 Router: Found {len(tool_calls)} tool calls - routing to TOOLS")
             return "tools"
 
     # Check if we just completed an ingest operation
@@ -82,7 +90,7 @@ def router(state):
 
     if user_message:
         content = user_message.content.lower()
-        logger.info(f"🎯 Router: Checking user's original message: {content[:100]}")
+        logger.debug(f"🎯 Router: Checking user's original message: {content[:100]}")
 
         # Check for ingestion request - but only if not already completed
         if "ingest" in content and not ingest_completed:
@@ -122,9 +130,9 @@ def router(state):
     # If the AI made tool calls, go to tools node
     if isinstance(last_message, AIMessage):
         tool_calls = getattr(last_message, "tool_calls", [])
-        logger.info(f"🎯 Router: Found {len(tool_calls)} tool calls")
+        logger.debug(f"🎯 Router: Found {len(tool_calls)} tool calls")
         if tool_calls and len(tool_calls) > 0:
-            logger.info(f"🎯 Router: Routing to TOOLS")
+            logger.debug(f"🎯 Router: Routing to TOOLS")
             return "tools"
 
     # Check for RAG-style questions (knowledge base queries)
@@ -136,13 +144,26 @@ def router(state):
                 return "rag"
 
     # Default: continue with normal agent completion
-    logger.info(f"🎯 Router: Continuing to END (normal completion)")
+    logger.debug(f"🎯 Router: Continuing to END (normal completion)")
     return "continue"
 
 
 async def rag_node(state):
-    """Search RAG and provide context to answer the question"""
+    """
+    Search RAG and provide context to answer the question
+    NOW WITH STOP SIGNAL CHECK
+    """
     logger = logging.getLogger("mcp_client")
+
+    # Check stop signal first
+    if is_stop_requested():
+        logger.warning("🛑 RAG node: Stop requested - skipping RAG search")
+        msg = AIMessage(content="Search cancelled by user.")
+        return {
+            "messages": state["messages"] + [msg],
+            "llm": state.get("llm"),
+            "stopped": True
+        }
 
     # Get the user's original question (most recent HumanMessage)
     user_message = None
@@ -205,7 +226,7 @@ async def rag_node(state):
             logger.info(f"📊 Tracked rag_search_tool: {tool_duration:.2f}s")
 
         logger.info(f"🔍 RAG tool result type: {type(result)}")
-        logger.info(f"🔍 RAG tool result (first 200 chars): {str(result)[:200]}")
+        logger.debug(f"🔍 RAG tool result (first 200 chars): {str(result)[:200]}")
 
         # Handle different result types
         if isinstance(result, list) and len(result) > 0:
@@ -274,7 +295,7 @@ async def rag_node(state):
                         json_str = json_str.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
                         json_str = json_str.replace('\\\\', '\\').replace('\\"', '"')
 
-                    logger.info(f"🔍 Extracted JSON (first 100 chars): {json_str[:100]}")
+                    logger.debug(f"🔍 Extracted JSON (first 100 chars): {json_str[:100]}")
 
                     result = json.loads(json_str)
                     logger.info("✅ Successfully parsed JSON from TextContent string")
@@ -300,7 +321,7 @@ async def rag_node(state):
             logger.info(f"✅ Extracted {len(chunks)} chunks from RAG results")
 
             for i, chunk in enumerate(chunks[:3]):
-                logger.info(f"📄 Chunk {i+1} preview: {chunk[:150]}...")
+                logger.debug(f"📄 Chunk {i+1} preview: {chunk[:150]}...")
 
         if not chunks:
             logger.warning("⚠️ No chunks found in RAG results")
@@ -312,13 +333,13 @@ async def rag_node(state):
         logger.info(f"📄 Using top 3 chunks as context")
 
         # DIAGNOSTIC: Log what we're sending
-        logger.info("=" * 80)
-        logger.info("🔍 CONTEXT BEING SENT TO LLM:")
-        logger.info("=" * 80)
-        logger.info(context[:1500])
+        logger.debug("=" * 80)
+        logger.debug("🔍 CONTEXT BEING SENT TO LLM:")
+        logger.debug("=" * 80)
+        logger.debug(context[:1500])
         if len(context) > 1500:
-            logger.info(f"... (truncated, total: {len(context)} chars)")
-        logger.info("=" * 80)
+            logger.debug(f"... (truncated, total: {len(context)} chars)")
+        logger.debug("=" * 80)
 
         # Create fresh conversation with ONLY the context
         augmented_messages = [
@@ -348,7 +369,7 @@ The movies shown above ARE the search results. Just present them."""),
         ]
 
         llm = state.get("llm")
-        logger.info(f"🔍 LLM from state: type={type(llm)}, value={llm}")
+        logger.debug(f"🔍 LLM from state: type={type(llm)}, value={llm}")
 
         if not llm or not hasattr(llm, 'ainvoke'):
             logger.warning("⚠️ LLM not provided or invalid in state, creating new instance")
@@ -498,6 +519,7 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
     logger.warning(f"🎯 No specific intent detected for: '{user_message}' - using all {len(all_tools)} tools")
     return all_tools
 
+
 def create_langgraph_agent(llm_with_tools, tools):
     """Create and compile the LangGraph agent"""
     logger = logging.getLogger("mcp_client")
@@ -507,6 +529,18 @@ def create_langgraph_agent(llm_with_tools, tools):
     base_llm = llm_with_tools.bound if hasattr(llm_with_tools, 'bound') else llm_with_tools
 
     async def call_model(state: AgentState):
+        # Check stop signal first
+        if is_stop_requested():
+            logger.warning("🛑 call_model: Stop requested - returning empty response")
+            empty_response = AIMessage(content="Operation cancelled by user.")
+            return {
+                "messages": state["messages"] + [empty_response],
+                "tools": state.get("tools", {}),
+                "llm": state.get("llm"),
+                "ingest_completed": state.get("ingest_completed", False),
+                "stopped": True
+            }
+
         messages = state["messages"]
 
         # Get user's original message for tool filtering
@@ -599,7 +633,7 @@ def create_langgraph_agent(llm_with_tools, tools):
                     logger.info(f"🔧   Tool: {tc.get('name', 'unknown')}, Args: {tc.get('args', {})}")
             else:
                 content = response.content if hasattr(response, 'content') else str(response)
-                logger.info(f"🔧 No tool calls. Full response: {content}")
+                logger.debug(f"🔧 No tool calls. Full response: {content}")
 
             if hasattr(response, 'content'):
                 if not response.content or not response.content.strip():
@@ -610,6 +644,7 @@ def create_langgraph_agent(llm_with_tools, tools):
                 "tools": state.get("tools", {}),
                 "llm": state.get("llm"),
                 "ingest_completed": state.get("ingest_completed", False),
+                "stopped": state.get("stopped", False)
             }
         except Exception as e:
             duration = time.time() - start_time
@@ -620,6 +655,18 @@ def create_langgraph_agent(llm_with_tools, tools):
             raise
 
     async def ingest_node(state: AgentState):
+        # Check stop signal first
+        if is_stop_requested():
+            logger.warning("🛑 ingest_node: Stop requested - skipping ingestion")
+            msg = AIMessage(content="Ingestion cancelled by user.")
+            return {
+                "messages": state["messages"] + [msg],
+                "tools": state.get("tools", {}),
+                "llm": state.get("llm"),
+                "ingest_completed": True,
+                "stopped": True
+            }
+
         tools_dict = state.get("tools", {})
         ingest_tool = None
 
@@ -634,7 +681,8 @@ def create_langgraph_agent(llm_with_tools, tools):
                 "messages": state["messages"] + [msg],
                 "tools": state.get("tools", {}),
                 "llm": state.get("llm"),
-                "ingest_completed": state.get("ingest_completed", False),
+                "ingest_completed": True,
+                "stopped": False
             }
 
         try:
@@ -655,14 +703,14 @@ def create_langgraph_agent(llm_with_tools, tools):
             logger.info(f"📥 Starting ingest operation with limit={limit}...")
             result = await ingest_tool.ainvoke({"limit": limit})
 
-            logger.info(f"🔍 Raw result type: {type(result)}")
-            logger.info(f"🔍 Raw result: {result}")
+            logger.debug(f"🔍 Raw result type: {type(result)}")
+            logger.debug(f"🔍 Raw result: {result}")
 
             if isinstance(result, list) and len(result) > 0:
                 if hasattr(result[0], 'text'):
                     logger.info("🔍 Detected TextContent object in list")
                     result = result[0].text
-                    logger.info(f"🔍 Extracted text from object, length: {len(result)}")
+                    logger.debug(f"🔍 Extracted text from object, length: {len(result)}")
 
             if isinstance(result, str) and result.startswith('[TextContent('):
                 logger.info("🔍 Detected TextContent string, extracting...")
@@ -695,7 +743,7 @@ def create_langgraph_agent(llm_with_tools, tools):
                             json_str = json_str.replace('\\\\', '\\').replace("\\'", "'").replace('\\"', '"')
 
                         result = json_str
-                        logger.info(f"🔍 Extracted text, length: {len(result)}")
+                        logger.debug(f"🔍 Extracted text, length: {len(result)}")
 
             if isinstance(result, str):
                 try:
@@ -710,10 +758,22 @@ def create_langgraph_agent(llm_with_tools, tools):
                         "tools": state.get("tools", {}),
                         "llm": state.get("llm"),
                         "ingest_completed": True,
+                        "stopped": False
                     }
+
+            # Check if ingestion was stopped
+            was_stopped = result.get('stopped', False) if isinstance(result, dict) else False
 
             if isinstance(result, dict) and "error" in result:
                 msg = AIMessage(content=f"Ingestion error: {result['error']}")
+            elif was_stopped:
+                # Ingestion was stopped
+                stop_reason = result.get('stop_reason', 'Stopped by user')
+                items_processed = result.get('items_processed', 0)
+                msg = AIMessage(
+                    content=f"🛑 **Ingestion stopped:** {stop_reason}\n\n"
+                            f"Items processed before stop: {items_processed}"
+                )
             else:
                 ingested = result.get('ingested', []) if isinstance(result, dict) else []
                 remaining = result.get('remaining', 0) if isinstance(result, dict) else 0
@@ -733,19 +793,21 @@ def create_langgraph_agent(llm_with_tools, tools):
                         content=f"✅ All items already ingested.\n\n📊 **Total items in RAG:** {total_ingested}"
                     )
 
-            logger.info("✅ Ingest operation completed successfully")
+            logger.info("✅ Ingest operation completed")
 
         except Exception as e:
             logger.error(f"❌ Error in ingest_node: {e}")
             import traceback
             traceback.print_exc()
             msg = AIMessage(content=f"Ingestion failed: {str(e)}")
+            was_stopped = False
 
         return {
             "messages": state["messages"] + [msg],
             "tools": state.get("tools", {}),
             "llm": state.get("llm"),
             "ingest_completed": True,
+            "stopped": was_stopped
         }
 
     workflow = StateGraph(AgentState)
@@ -783,9 +845,12 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
 
     start_time = time.time()
 
+    # ═══════════════════════════════════════════════════════════
     # CLEAR STOP SIGNAL AT START OF NEW REQUEST
     # This ensures old stop requests don't block new requests
+    # ═══════════════════════════════════════════════════════════
     clear_stop()
+    logger.info("✅ Stop signal cleared for new request")
 
     try:
         if METRICS_AVAILABLE:
@@ -835,17 +900,23 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
 
         # Invoke the agent
         # NOTE: ainvoke is atomic - can't check stop mid-execution
-        # For interruptible execution, switch to astream in the future
+        # However, individual nodes (router, call_model, ingest_node, rag_node) DO check stop
         result = await agent.ainvoke({
             "messages": conversation_state["messages"],
             "tools": tool_registry,
             "llm": llm,
-            "ingest_completed": False
+            "ingest_completed": False,
+            "stopped": False
         })
 
         new_messages = result["messages"][len(conversation_state["messages"]):]
         logger.info(f"📨 Agent added {len(new_messages)} new messages")
         conversation_state["messages"].extend(new_messages)
+
+        # Check if execution was stopped
+        was_stopped = result.get("stopped", False)
+        if was_stopped:
+            logger.warning("🛑 Agent execution was stopped")
 
         # Track tool calls from AIMessages with tool_calls
         if METRICS_AVAILABLE:
@@ -861,7 +932,7 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
                     if tool_name and tool_id and tool_id not in tool_calls_seen:
                         tool_calls_seen.add(tool_id)
                         metrics["tool_calls"][tool_name] += 1
-                        logger.info(f"📊 Tracked tool: {tool_name}")
+                        logger.debug(f"📊 Tracked tool: {tool_name}")
 
         # Reset loop count
         conversation_state["loop_count"] = 0
@@ -870,14 +941,14 @@ async def run_agent(agent, conversation_state, user_message, logger, tools, syst
         if METRICS_AVAILABLE:
             duration = time.time() - start_time
             metrics["agent_times"].append((time.time(), duration))
-            logger.info(f"✅ Agent run completed in {duration:.2f}s")
+            logger.info(f"✅ Agent run completed in {duration:.2f}s (stopped={was_stopped})")
 
         # Debug: Log final state
-        logger.info(f"📨 Final conversation has {len(conversation_state['messages'])} messages")
+        logger.debug(f"📨 Final conversation has {len(conversation_state['messages'])} messages")
         for i, msg in enumerate(conversation_state['messages'][-5:]):
             msg_type = type(msg).__name__
             content_preview = msg.content[:100] if hasattr(msg, 'content') else str(msg)[:100]
-            logger.info(f"  [-{5 - i}] {msg_type}: {content_preview}")
+            logger.debug(f"  [-{5 - i}] {msg_type}: {content_preview}")
 
         return {"messages": conversation_state["messages"]}
 

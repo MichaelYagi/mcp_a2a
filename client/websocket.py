@@ -1,5 +1,5 @@
 """
-WebSocket Module
+WebSocket Module (WITH REAL-TIME STOP HANDLING)
 Handles WebSocket servers for chat, logs, and system monitor
 """
 
@@ -11,6 +11,7 @@ import websockets
 from langchain_core.messages import HumanMessage
 
 from client.commands import handle_command
+from client.stop_signal import request_stop  # ← NEW: Import stop signal
 
 # Import system monitor conditionally
 try:
@@ -32,10 +33,9 @@ async def broadcast_message(message_type, data):
             return_exceptions=True
         )
 
-
 async def websocket_handler(websocket, agent_ref, tools, logger, conversation_state, run_agent_fn,
                             models_module, model_name, system_prompt, orchestrator=None, multi_agent_state=None):
-    """Handle WebSocket connections for chat (WITH MULTI-AGENT STATE)"""
+    """Handle WebSocket connections for chat (WITH MULTI-AGENT STATE + REAL-TIME STOP)"""
     CONNECTED_WEBSOCKETS.add(websocket)
 
     try:
@@ -48,6 +48,31 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 data = {"type": "user", "text": raw}
+
+            if data.get("type") == "user" or "text" in data:
+                prompt = data.get("text")
+
+                # Check for :stop first
+                if prompt == ":stop":
+                    import sys
+
+                    # Log the stop request
+                    logger.warning("🛑 STOP SIGNAL ACTIVATED - Operations will halt at next checkpoint")
+
+                    # Trigger the stop
+                    request_stop()
+
+                    # Print to CLI stdout so it's visible there too
+                    print("\n🛑 Stop requested - operation will halt at next checkpoint")
+                    print("   This may take a few seconds for the current step to complete.")
+                    print("   Watch for '🛑 Stopped' messages below.\n")
+                    sys.stdout.flush()  # Force output to appear immediately
+
+                    # Send to web UI
+                    await broadcast_message("assistant_message", {
+                        "text": "🛑 Stop requested - operation will halt at next checkpoint.\n\nThis may take a few seconds for the current step to complete."
+                    })
+                    continue  # Don't process as a regular message
 
             # Handle system stats subscription
             if data.get("type") == "subscribe_system_stats":
@@ -175,7 +200,7 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
 
                 await broadcast_message("assistant_message", {
                     "text": assistant_text,
-                    "multi_agent": result.get("multi_agent", False)  # ← Add this!
+                    "multi_agent": result.get("multi_agent", False)
                 })
     finally:
         CONNECTED_WEBSOCKETS.discard(websocket)

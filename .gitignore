@@ -22,3 +22,5 @@ knowledge/
 /test_metrics.py
 /test_plex_subtitles.py
 /tools/rag/ingested_items.json
+/test_stop_signal.py
+/debug_stop.py

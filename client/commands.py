@@ -1,5 +1,5 @@
 """
-Shared Commands Module (WITH :stats COMMAND)
+Shared Commands Module (WITH :stats AND :stop COMMANDS)
 Handles command processing for both CLI and WebSocket
 """
 
@@ -10,6 +10,7 @@ def get_commands_list():
     """Get list of available commands"""
     return [
         ":commands - List all available commands",
+        ":stop - Stop current operation (ingestion, search, etc.)",
         ":stats - Show performance metrics",
         ":tools - List all available tools",
         ":tool <tool> - Get the tool description",
@@ -118,13 +119,52 @@ async def handle_command(query, tools, model_name, conversation_state, models_mo
         return True, "\n".join(get_commands_list()), None, None
 
     if query == ":stop":
-        # Import and trigger stop signal
+        # Import and trigger stop signal with comprehensive feedback
         try:
-            from client.stop_signal import request_stop
+            from client.stop_signal import request_stop, is_stop_requested, get_stop_status
+
+            # Check if already stopped
+            if is_stop_requested():
+                status = get_stop_status()
+                elapsed = status.get("elapsed", 0)
+
+                response = (
+                    f"⚠️  Stop already requested {elapsed:.1f}s ago.\n"
+                    f"Waiting for current operation to reach next checkpoint...\n\n"
+                    f"Operations check for stop signals:\n"
+                    f"  • Before each batch\n"
+                    f"  • Before/after each item\n"
+                    f"  • Before each chunk (~3-5 seconds)\n\n"
+                    f"If operation seems stuck, it may be in a blocking operation.\n"
+                    f"Check logs for '🛑 Stop' messages."
+                )
+
+                if logger:
+                    logger.warning(f"⚠️  Stop already active for {elapsed:.1f}s")
+
+                return True, response, None, None
+
+            # Request stop
             request_stop()
-            return True, "🛑 Stop requested.", None, None
-        except ImportError:
-            return True, "Stop signal module not available.", None, None
+
+            if logger:
+                logger.warning("🛑 STOP SIGNAL ACTIVATED via :stop command")
+
+            response = (
+                "🛑 **Stop requested.**\n\n"
+                "Current operation will halt at next checkpoint:\n"
+                "  • Ingestion: After current item\n"
+                "  • Search: After current batch\n"
+                "  • Multi-agent: After current task\n\n"
+                "Watch for '🛑 Stopped' messages in logs."
+            )
+
+            return True, response, None, None
+
+        except ImportError as e:
+            if logger:
+                logger.error(f"❌ Cannot import stop_signal: {e}")
+            return True, "❌ Stop signal module not available.", None, None
 
     if query == ":stats":
         return True, format_stats_display(), None, None

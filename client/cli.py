@@ -1,5 +1,5 @@
 """
-CLI Module (WITH MULTI-AGENT SUPPORT - FIXED STATE)
+CLI Module (WITH MULTI-AGENT SUPPORT - FIXED STATE + REAL-TIME STOP)
 Handles command-line interface and user input
 """
 
@@ -10,6 +10,7 @@ from queue import Queue
 
 from client.websocket import broadcast_message
 from client.commands import handle_command, get_commands_list
+from client.stop_signal import request_stop  # ← NEW: Import stop signal
 
 
 def list_commands():
@@ -30,7 +31,7 @@ def input_thread(input_queue, stop_event):
 
 async def cli_input_loop(agent, logger, tools, model_name, conversation_state, run_agent_fn, models_module,
                          system_prompt, create_agent_fn, orchestrator=None, multi_agent_state=None):
-    """Handle CLI input using a separate thread (with multi-agent support)"""
+    """Handle CLI input using a separate thread (with multi-agent support + REAL-TIME STOP)"""
     input_queue = Queue()
     stop_event = threading.Event()
 
@@ -38,16 +39,26 @@ async def cli_input_loop(agent, logger, tools, model_name, conversation_state, r
     thread.start()
 
     try:
+        active_task = None
+
         while True:
             await asyncio.sleep(0.1)
 
             if not input_queue.empty():
                 query = input_queue.get().strip()
 
+                if query == ":stop":
+                    request_stop()
+                    print("\n🛑 Stop requested - operation will halt at next checkpoint")
+                    print("   This may take a few seconds for the current step to complete.")
+                    print("   Watch for '🛑 Stopped' messages below.\n")
+                    await broadcast_message("cli_stop_message", {"text": "🛑 Stop requested"})
+                    continue
+
                 if not query:
                     continue
 
-                # Handle commands
+                # Handle other commands
                 if query.startswith(":"):
                     handled, response, new_agent, new_model = await handle_command(
                         query, tools, model_name, conversation_state, models_module,

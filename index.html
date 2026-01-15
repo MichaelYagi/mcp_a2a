@@ -1250,13 +1250,48 @@
         // Stop Processing Function
         // -------------------------
         function stopProcessing() {
-            ws.send(JSON.stringify({
-                type: "user",
-                text: ":stop"
-            }));
-            stopBtn.style.display = 'none';
-            sendBtn.style.display = 'flex';
-            isProcessing = false;
+            // 1. Immediate Visual Feedback
+            stopBtn.disabled = true;
+            stopBtn.style.opacity = '0.5';
+            stopBtn.innerHTML = "Stopping...";
+
+            // 2. Send the command immediately
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log("🛑 Priority Stop: Sending :stop command");
+                ws.send(JSON.stringify({
+                    type: "user",
+                    text: ":stop"
+                }));
+
+                ws.send(JSON.stringify({
+                    type: "user",
+                    text: ":stop"
+                }));
+            }
+
+            // 3. Local UI Override
+            // We don't wait for the server to tell us to stop UI-wise
+            hideThinking();
+
+            const stopMsg = document.createElement("div");
+            stopMsg.className = "msg assistant";
+            stopMsg.style.borderLeft = "4px solid #e74c3c";
+            stopMsg.innerHTML = `🛑 <strong>Interrupt sent</strong>. Halting process...`;
+            chat.appendChild(stopMsg);
+            chat.scrollTop = chat.scrollHeight;
+
+            // // 4. Force Reset UI after a short delay (Safety Net)
+            // // This handles cases where the server is too busy to send a confirmation
+            // setTimeout(() => {
+            //     isProcessing = false;
+            //     stopBtn.style.display = 'none';
+            //     stopBtn.disabled = false;
+            //     stopBtn.style.opacity = '1';
+            //     stopBtn.innerHTML = "Stop"; // Reset text for next time
+            //     sendBtn.style.display = 'flex';
+            //     sendBtn.disabled = false;
+            //     updateStatusWithMode();
+            // }, 1000);
         }
 
         // -------------------------
@@ -1492,6 +1527,30 @@
             }
         }
 
+        function resetControlButtons() {
+            // 1. Reset Boolean State
+            isProcessing = false;
+
+            // 2. Toggle Button Visibility
+            // Use 'flex' for the stop button because your CSS uses flex for centering
+            stopBtn.style.display = 'none';
+            sendBtn.style.display = 'flex';
+
+            // 3. Re-enable the Send Button
+            sendBtn.disabled = false;
+            sendBtn.style.opacity = '1';
+            sendBtn.style.cursor = 'pointer';
+
+            // 4. Cleanup the Stop Button for its next use
+            stopBtn.disabled = false;
+            stopBtn.style.opacity = '1';
+            stopBtn.style.cursor = 'pointer';
+            stopBtn.innerHTML = "Stop";
+
+            // 5. Update the UI Status text
+            updateStatusWithMode();
+        }
+
         // -------------------------
         // Thinking indicator
         // -------------------------
@@ -1571,6 +1630,13 @@
             }
 
             if (data.type === "cli_assistant_message" || data.type === "assistant_message") {
+                if (data.text.includes("🛑") || data.text.toLowerCase().includes("interrupted")) {
+                    isProcessing = false;
+                    hideThinking();
+                    resetControlButtons(); // Helper to swap buttons
+                    return;
+                }
+
                 // Check if it's a multi-agent command response
                 if (data.text.includes("Multi-agent mode")) {
                     // Update toggle if needed based on response
