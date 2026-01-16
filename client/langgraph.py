@@ -46,7 +46,6 @@ class AgentState(TypedDict):
     ingest_completed: bool
     stopped: bool  # NEW: Track if execution was stopped
 
-
 def router(state):
     """
     Route based on what the agent decided to do
@@ -74,16 +73,22 @@ def router(state):
     # ═══════════════════════════════════════════════════════════
     # A2A COMPLETION CHECK: Stop after A2A tool result
     # ═══════════════════════════════════════════════════════════
+    from langchain_core.messages import ToolMessage
+
+    # Check if last message is a ToolMessage from an A2A tool
+    if isinstance(last_message, ToolMessage):
+        if hasattr(last_message, 'name') and last_message.name in ["send_a2a", "discover_a2a"]:
+            logger.info(f"🛑 Router: {last_message.name} result received - ending execution")
+            return "continue"  # Go to END
+
+    # Also check if second-to-last was A2A tool call and last is the result
     if len(state["messages"]) >= 2:
-        # Check if second-to-last message was an AI message with send_a2a tool call
         second_last = state["messages"][-2]
         if isinstance(second_last, AIMessage) and hasattr(second_last, "tool_calls"):
             for tc in second_last.tool_calls:
                 if tc.get("name") in ["send_a2a", "discover_a2a"]:
-                    # Last message should be the tool result
-                    from langchain_core.messages import ToolMessage
                     if isinstance(last_message, ToolMessage):
-                        logger.info("🛑 Router: A2A tool result received - ending execution")
+                        logger.info(f"🛑 Router: A2A tool result received (via second-last check) - ending execution")
                         return "continue"  # Go to END
 
     # If LLM made tool calls, execute them first
@@ -447,13 +452,20 @@ The movies shown above ARE the search results. Just present them."""),
         return {"messages": state["messages"] + [msg], "llm": state.get("llm")}
 
 
-def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
+def filter_tools_by_intent(user_message: str, all_tools: list, execution_context: dict = None) -> list:
     """
     Filter tools based on user intent to reduce confusion.
     Only show the LLM the tools relevant to the current request.
+
+    execution_context: dict with 'has_executed_a2a' flag to prevent re-filtering
     """
     user_message_lower = user_message.lower()
     logger = logging.getLogger("mcp_client")
+
+    # If A2A has already been executed, return ALL tools so LLM can respond
+    if execution_context and execution_context.get('has_executed_a2a'):
+        logger.info("🎯 A2A already executed - returning all tools for response synthesis")
+        return all_tools
 
     # Developer override: explicit tool name
     if "send_a2a" in user_message_lower:
@@ -588,7 +600,6 @@ def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
     logger.warning(f"🎯 No specific intent detected for: '{user_message}' - using all {len(all_tools)} tools")
     return all_tools
 
-
 def create_langgraph_agent(llm_with_tools, tools):
     """Create and compile the LangGraph agent"""
     logger = logging.getLogger("mcp_client")
@@ -612,6 +623,16 @@ def create_langgraph_agent(llm_with_tools, tools):
 
         messages = state["messages"]
 
+        # Check if we just executed an A2A tool
+        has_executed_a2a = False
+        from langchain_core.messages import ToolMessage
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage) and hasattr(msg, 'name'):
+                if msg.name in ["send_a2a", "discover_a2a"]:
+                    has_executed_a2a = True
+                    logger.info(f"🎯 Detected A2A tool execution: {msg.name}")
+                    break
+
         # Get user's original message for tool filtering
         user_message = None
         for msg in reversed(messages):
@@ -620,7 +641,7 @@ def create_langgraph_agent(llm_with_tools, tools):
                 break
 
         # Filter tools based on user intent
-        if user_message:
+        if user_message and not has_executed_a2a:  # Only filter BEFORE A2A execution
             # Get all available tools from state
             all_tools = list(state.get("tools", {}).values())
             filtered_tools = filter_tools_by_intent(user_message, all_tools)
@@ -629,12 +650,12 @@ def create_langgraph_agent(llm_with_tools, tools):
 
             # Bind the filtered tools to the BASE LLM
             llm_to_use = base_llm.bind_tools(filtered_tools)
+        elif has_executed_a2a:
+            # AFTER A2A execution, give LLM NO tools so it must respond with text
+            logger.info("🎯 A2A executed - removing tools to force text response")
+            llm_to_use = base_llm  # No tools bound
         else:
             # No user message, use all tools
-            llm_to_use = llm_with_tools
-
-        # If the last message is a tool result, do NOT filter tools again
-        if isinstance(messages[-1], AIMessage) and hasattr(messages[-1], "tool_call_id"):
             llm_to_use = llm_with_tools
 
         logger.info(f"🧠 Calling LLM with {len(messages)} messages")
