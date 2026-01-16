@@ -41,7 +41,7 @@ def save_last_model(model_name):
         f.write(model_name)
 
 
-async def switch_model(model_name, tools, logger, create_agent_fn):
+async def switch_model(model_name, tools, logger, create_agent_fn, a2a_state=None):
     """Switch to a different Ollama model"""
     from langchain_ollama import ChatOllama
 
@@ -61,6 +61,11 @@ async def switch_model(model_name, tools, logger, create_agent_fn):
     llm_with_tools = new_llm.bind_tools(tools)
 
     agent = create_agent_fn(llm_with_tools, tools)
+
+    # Re-register A2A tools if A2A state exists
+    if a2a_state and hasattr(a2a_state, "register_a2a_tools"):
+        logger.info("🔌 Re-registering A2A tools after model switch")
+        await a2a_state.register_a2a_tools(agent)
 
     save_last_model(model_name)
 

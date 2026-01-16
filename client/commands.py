@@ -2,6 +2,7 @@
 Command Handlers for MCP Client
 Compatible with existing CLI/WebSocket interfaces
 """
+from client.langgraph import create_langgraph_agent
 
 
 def get_commands_list():
@@ -432,7 +433,8 @@ async def handle_command(
             new_model,
             tools,
             logger,
-            create_agent_fn
+            create_langgraph_agent,
+            a2a_state=a2a_state
         )
 
         if new_agent is None:

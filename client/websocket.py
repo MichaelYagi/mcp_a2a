@@ -11,6 +11,7 @@ import websockets
 from langchain_core.messages import HumanMessage
 
 from client.commands import handle_command, handle_a2a_commands
+from client.langgraph import create_langgraph_agent
 from client.stop_signal import request_stop
 
 # Import system monitor conditionally
@@ -161,7 +162,8 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                     model_name,
                     tools,
                     logger,
-                    lambda llm, t: agent_ref[0].__class__(llm, t)
+                    create_agent_fn=create_langgraph_agent,
+                    a2a_state=a2a_state
                 )
 
                 if new_agent is None:
