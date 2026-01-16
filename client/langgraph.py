@@ -46,10 +46,11 @@ class AgentState(TypedDict):
     ingest_completed: bool
     stopped: bool  # NEW: Track if execution was stopped
 
+
 def router(state):
     """
     Route based on what the agent decided to do
-    NOW WITH STOP SIGNAL HANDLING AND A2A COMPLETION CHECK
+    WITH STOP SIGNAL HANDLING AND A2A LOOP PREVENTION
     """
     last_message = state["messages"][-1]
 
@@ -61,54 +62,51 @@ def router(state):
     # ═══════════════════════════════════════════════════════════
     if is_stop_requested():
         logger.warning(f"🛑 Router: Stop requested - ending graph execution")
-        # Mark state as stopped
         state["stopped"] = True
         return "continue"  # Go to END
 
-    # Check if already marked as stopped in state
     if state.get("stopped", False):
         logger.warning(f"🛑 Router: Execution already stopped - ending")
         return "continue"
 
     # ═══════════════════════════════════════════════════════════
-    # A2A COMPLETION CHECK: Stop after A2A tool result
+    # A2A COMPLETION CHECK: Stop after A2A tool result (FIRST PRIORITY)
     # ═══════════════════════════════════════════════════════════
     from langchain_core.messages import ToolMessage
 
     # Check if last message is a ToolMessage from an A2A tool
     if isinstance(last_message, ToolMessage):
-        if hasattr(last_message, 'name') and last_message.name in ["send_a2a", "discover_a2a"]:
+        if hasattr(last_message, 'name') and last_message.name in ["send_a2a", "discover_a2a", "send_a2a_streaming",
+                                                                   "send_a2a_batch"]:
             logger.info(f"🛑 Router: {last_message.name} result received - ending execution")
             return "continue"  # Go to END
 
-    # Also check if second-to-last was A2A tool call and last is the result
-    if len(state["messages"]) >= 2:
-        second_last = state["messages"][-2]
-        if isinstance(second_last, AIMessage) and hasattr(second_last, "tool_calls"):
-            for tc in second_last.tool_calls:
-                if tc.get("name") in ["send_a2a", "discover_a2a"]:
-                    if isinstance(last_message, ToolMessage):
-                        logger.info(f"🛑 Router: A2A tool result received (via second-last check) - ending execution")
-                        return "continue"  # Go to END
-
+    # ═══════════════════════════════════════════════════════════
     # If LLM made tool calls, execute them first
+    # ═══════════════════════════════════════════════════════════
     if isinstance(last_message, AIMessage):
         tool_calls = getattr(last_message, "tool_calls", [])
         if tool_calls and len(tool_calls) > 0:
             logger.debug(f"🎯 Router: Found {len(tool_calls)} tool calls - routing to TOOLS")
             return "tools"
 
+    # ═══════════════════════════════════════════════════════════
     # Detect tool result messages
+    # ═══════════════════════════════════════════════════════════
     if isinstance(last_message, AIMessage):
         if hasattr(last_message, "tool_call_id"):
             # This is a tool RESULT, not a tool call
             logger.info("🛑 Router: Tool result detected - stopping")
             return "continue"
 
+    # ═══════════════════════════════════════════════════════════
     # Check if we just completed an ingest operation
+    # ═══════════════════════════════════════════════════════════
     ingest_completed = state.get("ingest_completed", False)
 
-    # Check if user's ORIGINAL message requested RAG (before LLM processing)
+    # ═══════════════════════════════════════════════════════════
+    # Check if user's ORIGINAL message requested something
+    # ═══════════════════════════════════════════════════════════
     user_message = None
     for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
@@ -119,15 +117,17 @@ def router(state):
         content = user_message.content.lower()
         logger.debug(f"🎯 Router: Checking user's original message: {content[:100]}")
 
-        # A2A explicit routing - ONLY route TO tools if not already executed
+        # ═══════════════════════════════════════════════════════════
+        # A2A EXPLICIT ROUTING - ONLY ROUTE IF NOT ALREADY EXECUTED
+        # ═══════════════════════════════════════════════════════════
         if isinstance(user_message, HumanMessage):
-            if "send_a2a" in content or "discover_a2a" in content:
-                # Check if we already have a ToolMessage for send_a2a/discover_a2a
+            if "send_a2a" in content or "discover_a2a" in content or "a2a" in content:
+                # Check if we already have a ToolMessage for A2A tools
                 has_a2a_result = False
                 from langchain_core.messages import ToolMessage
                 for msg in reversed(state["messages"]):
                     if isinstance(msg, ToolMessage) and hasattr(msg, 'name'):
-                        if msg.name in ["send_a2a", "discover_a2a"]:
+                        if msg.name in ["send_a2a", "discover_a2a", "send_a2a_streaming", "send_a2a_batch"]:
                             has_a2a_result = True
                             logger.info("🛑 Router: A2A already executed - ending")
                             break
@@ -136,9 +136,11 @@ def router(state):
                     logger.info("🎯 Router: Explicit A2A request detected - routing to tools")
                     return "tools"
                 else:
-                    return "continue"
+                    return "continue"  # A2A done, end execution
 
-        # Check for ingestion request - but only if not already completed
+        # ═══════════════════════════════════════════════════════════
+        # INGEST ROUTING
+        # ═══════════════════════════════════════════════════════════
         if "ingest" in content and not ingest_completed:
             # Check if user wants to stop after one batch
             if any(stop_word in content for stop_word in ["stop", "then stop", "don't continue", "don't go on"]):
@@ -146,7 +148,6 @@ def router(state):
                 return "ingest"
 
             # Check if this is a multi-step query
-            # Multi-step indicators: "and then", "then", "first...then", etc.
             multi_step_indicators = [
                 " and then ", " then ", " after that ", " next ",
                 "first", "research.*analyze", "find.*summarize",
@@ -167,13 +168,17 @@ def router(state):
             logger.info(f"🎯 Router: Ingest already completed - skipping to END")
             return "continue"
 
-        # Check for EXPLICIT RAG requests (highest priority)
+        # ═══════════════════════════════════════════════════════════
+        # EXPLICIT RAG REQUESTS
+        # ═══════════════════════════════════════════════════════════
         if any(keyword in content for keyword in
                ["using rag", "use rag", "rag tool", "with rag", "search rag", "query rag"]):
             logger.info(f"🎯 Router: User explicitly requested RAG - routing there")
             return "rag"
 
-    # If the AI made tool calls, go to tools node
+    # ═══════════════════════════════════════════════════════════
+    # If the AI made tool calls (check again for any late additions)
+    # ═══════════════════════════════════════════════════════════
     if isinstance(last_message, AIMessage):
         tool_calls = getattr(last_message, "tool_calls", [])
         logger.debug(f"🎯 Router: Found {len(tool_calls)} tool calls")
@@ -181,14 +186,17 @@ def router(state):
             logger.debug(f"🎯 Router: Routing to TOOLS")
             return "tools"
 
-    # Detect tool result messages
+    # ═══════════════════════════════════════════════════════════
+    # Detect tool result messages (final check)
+    # ═══════════════════════════════════════════════════════════
     if isinstance(last_message, AIMessage):
         if hasattr(last_message, "tool_call_id"):
-            # This is a tool RESULT, not a tool call
             logger.info("🛑 Router: Tool result detected - stopping")
             return "continue"
 
-    # Check for RAG-style questions (knowledge base queries)
+    # ═══════════════════════════════════════════════════════════
+    # RAG-STYLE QUESTIONS (knowledge base queries)
+    # ═══════════════════════════════════════════════════════════
     if isinstance(last_message, HumanMessage):
         content = last_message.content.lower()
         if not any(keyword in content for keyword in ["movie", "plex", "search", "find", "show", "media"]):
@@ -196,7 +204,9 @@ def router(state):
                 logger.info(f"🎯 Router: Routing to RAG (knowledge query)")
                 return "rag"
 
-    # Default: continue with normal agent completion
+    # ═══════════════════════════════════════════════════════════
+    # DEFAULT: Continue with normal agent completion
+    # ═══════════════════════════════════════════════════════════
     logger.debug(f"🎯 Router: Continuing to END (normal completion)")
     return "continue"
 
@@ -452,42 +462,55 @@ The movies shown above ARE the search results. Just present them."""),
         return {"messages": state["messages"] + [msg], "llm": state.get("llm")}
 
 
-def filter_tools_by_intent(user_message: str, all_tools: list, execution_context: dict = None) -> list:
+def filter_tools_by_intent(user_message: str, all_tools: list) -> list:
     """
     Filter tools based on user intent to reduce confusion.
     Only show the LLM the tools relevant to the current request.
-
-    execution_context: dict with 'has_executed_a2a' flag to prevent re-filtering
     """
     user_message_lower = user_message.lower()
     logger = logging.getLogger("mcp_client")
 
-    # If A2A has already been executed, return ALL tools so LLM can respond
-    if execution_context and execution_context.get('has_executed_a2a'):
-        logger.info("🎯 A2A already executed - returning all tools for response synthesis")
-        return all_tools
+    # ═══════════════════════════════════════════════════════════
+    # A2A TOOLS - High Priority
+    # ═══════════════════════════════════════════════════════════
 
-    # Developer override: explicit tool name
-    if "send_a2a" in user_message_lower:
-        logger.info("🎯 Explicit A2A override: send_a2a")
-        return [t for t in all_tools if t.name == "send_a2a"]
+    # Developer override: explicit A2A tool names
+    if "send_a2a_streaming" in user_message_lower:
+        logger.info("🎯 Explicit A2A override: send_a2a_streaming")
+        return [t for t in all_tools if t.name == "send_a2a_streaming"]
+
+    if "send_a2a_batch" in user_message_lower:
+        logger.info("🎯 Explicit A2A override: send_a2a_batch")
+        return [t for t in all_tools if t.name == "send_a2a_batch"]
+
+    if "send_a2a" in user_message_lower or "a2a" in user_message_lower:
+        logger.info("🎯 Explicit A2A override: all A2A tools")
+        # Return ALL A2A tools so LLM can choose
+        return [t for t in all_tools if t.name in ["send_a2a", "send_a2a_streaming", "send_a2a_batch"]]
 
     if "discover_a2a" in user_message_lower:
         logger.info("🎯 Explicit A2A override: discover_a2a")
         return [t for t in all_tools if t.name == "discover_a2a"]
 
+    # General A2A keywords
     a2a_keywords = [
         "send to remote",
         "ask the remote agent",
         "use a2a",
         "using a2a",
         "call the remote agent",
-        "ask the other agent"
+        "ask the other agent",
+        "remote tool",
+        "remote agent"
     ]
 
     if any(keyword in user_message_lower for keyword in a2a_keywords):
         logger.info("🎯 Detected A2A intent")
-        return [t for t in all_tools if t.name in ["send_a2a", "discover_a2a"]]
+        return [t for t in all_tools if t.name in ["send_a2a", "send_a2a_streaming", "send_a2a_batch", "discover_a2a"]]
+
+    # ═══════════════════════════════════════════════════════════
+    # TODO/TASK TOOLS
+    # ═══════════════════════════════════════════════════════════
 
     # To-do/task keywords - COMPREHENSIVE LIST
     todo_keywords = [
@@ -526,24 +549,35 @@ def filter_tools_by_intent(user_message: str, all_tools: list, execution_context
             "update_todo_item", "delete_todo_item", "delete_all_todo_items"
         ]]
 
+    # ═══════════════════════════════════════════════════════════
+    # KNOWLEDGE BASE / NOTES TOOLS
+    # ═══════════════════════════════════════════════════════════
+
     # Note/memory keywords
     note_keywords = [
         "remember", "save this", "make a note", "write down", "store this",
         "note that", "keep track of", "record this", "jot down",
-        "save note", "add note", "create note"
+        "save note", "add note", "create note", "add entry", "list entries",
+        "search entries", "knowledge base"
     ]
 
     if any(keyword in user_message_lower for keyword in note_keywords):
         logger.info("🎯 Detected MEMORY/NOTE intent")
         return [t for t in all_tools if t.name in [
-            "rag_add_tool", "add_entry", "list_entries", "get_entry", "search_entries"
+            "add_entry", "list_entries", "get_entry", "search_entries",
+            "search_by_tag", "search_semantic", "update_entry", "delete_entry"
         ]]
+
+    # ═══════════════════════════════════════════════════════════
+    # RAG SEARCH TOOLS
+    # ═══════════════════════════════════════════════════════════
 
     # RAG search keywords
     rag_search_keywords = [
         "using the rag tool", "search my notes", "what do i know about",
         "find information", "search for information", "look up in notes",
-        "what did i save about", "search notes", "find in notes"
+        "what did i save about", "search notes", "find in notes",
+        "rag search", "search rag", "query rag"
     ]
 
     if any(keyword in user_message_lower for keyword in rag_search_keywords):
@@ -551,6 +585,10 @@ def filter_tools_by_intent(user_message: str, all_tools: list, execution_context
         return [t for t in all_tools if t.name in [
             "rag_search_tool", "search_entries", "search_semantic", "search_by_tag"
         ]]
+
+    # ═══════════════════════════════════════════════════════════
+    # PLEX INGESTION TOOLS
+    # ═══════════════════════════════════════════════════════════
 
     # PLEX INGESTION keywords
     ingest_keywords = [
@@ -567,11 +605,15 @@ def filter_tools_by_intent(user_message: str, all_tools: list, execution_context
             "plex_get_stats", "rag_search_tool",
         ]]
 
+    # ═══════════════════════════════════════════════════════════
+    # MEDIA/PLEX SEARCH TOOLS
+    # ═══════════════════════════════════════════════════════════
+
     # Media/Plex keywords
     media_keywords = [
         "find movie", "find movies", "search plex", "what movies", "show me",
         "movies about", "films about", "search for movie", "look for movie",
-        "search media", "find film", "find films"
+        "search media", "find film", "find films", "scene", "locate scene"
     ]
 
     if any(keyword in user_message_lower for keyword in media_keywords):
@@ -580,12 +622,20 @@ def filter_tools_by_intent(user_message: str, all_tools: list, execution_context
             "semantic_media_search_text", "scene_locator_tool", "find_scene_by_title"
         ]]
 
+    # ═══════════════════════════════════════════════════════════
+    # WEATHER TOOLS
+    # ═══════════════════════════════════════════════════════════
+
     # Weather keywords
     if any(keyword in user_message_lower for keyword in ["weather", "temperature", "forecast"]):
         logger.info("🎯 Detected WEATHER intent")
         return [t for t in all_tools if t.name in [
             "get_weather_tool", "get_location_tool"
         ]]
+
+    # ═══════════════════════════════════════════════════════════
+    # SYSTEM/HARDWARE TOOLS
+    # ═══════════════════════════════════════════════════════════
 
     # System/hardware keywords
     if any(keyword in user_message_lower for keyword in [
@@ -596,7 +646,44 @@ def filter_tools_by_intent(user_message: str, all_tools: list, execution_context
             "get_hardware_specs_tool", "get_system_info", "list_system_processes", "terminate_process"
         ]]
 
-    # Default: return all tools but log warning
+    # ═══════════════════════════════════════════════════════════
+    # CODE REVIEW TOOLS
+    # ═══════════════════════════════════════════════════════════
+
+    # Code review keywords
+    code_keywords = [
+        "code", "review code", "scan directory", "search code",
+        "summarize code", "debug", "fix bug", "codebase"
+    ]
+
+    if any(keyword in user_message_lower for keyword in code_keywords):
+        logger.info("🎯 Detected CODE REVIEW intent")
+        return [t for t in all_tools if t.name in [
+            "scan_code_directory", "search_code_in_directory",
+            "summarize_code_file", "summarize_code", "debug_fix"
+        ]]
+
+    # ═══════════════════════════════════════════════════════════
+    # TEXT PROCESSING TOOLS
+    # ═══════════════════════════════════════════════════════════
+
+    # Text processing keywords
+    text_keywords = [
+        "summarize", "explain", "simplify", "contextualize",
+        "split text", "merge summaries"
+    ]
+
+    if any(keyword in user_message_lower for keyword in text_keywords):
+        logger.info("🎯 Detected TEXT PROCESSING intent")
+        return [t for t in all_tools if t.name in [
+            "summarize_text_tool", "summarize_direct_tool", "explain_simplified_tool",
+            "concept_contextualizer_tool", "split_text_tool", "summarize_chunk_tool",
+            "merge_summaries_tool"
+        ]]
+
+    # ═══════════════════════════════════════════════════════════
+    # DEFAULT: Return all tools
+    # ═══════════════════════════════════════════════════════════
     logger.warning(f"🎯 No specific intent detected for: '{user_message}' - using all {len(all_tools)} tools")
     return all_tools
 
@@ -623,15 +710,29 @@ def create_langgraph_agent(llm_with_tools, tools):
 
         messages = state["messages"]
 
-        # Check if we just executed an A2A tool
+        # ═══════════════════════════════════════════════════════════
+        # Check if we just executed an A2A tool IN THIS TURN
+        # Only check messages AFTER the most recent HumanMessage
+        # ═══════════════════════════════════════════════════════════
         has_executed_a2a = False
         from langchain_core.messages import ToolMessage
-        for msg in reversed(messages):
-            if isinstance(msg, ToolMessage) and hasattr(msg, 'name'):
-                if msg.name in ["send_a2a", "discover_a2a", "send_a2a_streaming", "send_a2a_batch"]:
-                    has_executed_a2a = True
-                    logger.info(f"🎯 Detected A2A tool execution: {msg.name}")
-                    break
+
+        # Find the most recent HumanMessage (current turn)
+        last_human_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], HumanMessage):
+                last_human_idx = i
+                break
+
+        # Only check messages AFTER the last HumanMessage
+        if last_human_idx >= 0:
+            messages_this_turn = messages[last_human_idx + 1:]
+            for msg in messages_this_turn:
+                if isinstance(msg, ToolMessage) and hasattr(msg, 'name'):
+                    if msg.name in ["send_a2a", "discover_a2a", "send_a2a_streaming", "send_a2a_batch"]:
+                        has_executed_a2a = True
+                        logger.info(f"🎯 Detected A2A tool execution THIS TURN: {msg.name}")
+                        break
 
         # Get user's original message for tool filtering
         user_message = None
@@ -651,9 +752,9 @@ def create_langgraph_agent(llm_with_tools, tools):
             # Bind the filtered tools to the BASE LLM
             llm_to_use = base_llm.bind_tools(filtered_tools)
         elif has_executed_a2a:
-            # AFTER A2A execution, give LLM NO tools so it must respond with text
-            logger.info("🎯 A2A executed - removing tools to force text response")
-            llm_to_use = base_llm  # No tools bound
+            # After A2A execution THIS TURN, bind NO tools to force text response
+            logger.info("🎯 A2A executed THIS TURN - removing tools to force final text response")
+            llm_to_use = base_llm  # No tools bound = must respond with text
         else:
             # No user message, use all tools
             llm_to_use = llm_with_tools
