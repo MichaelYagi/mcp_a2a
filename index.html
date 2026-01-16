@@ -1755,10 +1755,128 @@
         // Message formatting
         // -------------------------
         function formatMessage(text) {
-            text = text.replace(/\n\s*\n\s*-\s+/g, "\n\n");
-            text = text.replace(/\n\s*-\s+/g, "\n");
-            text = text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-            text = text.replace(/\n\s*\n/g, "<br><br>");
+            // Escape HTML to prevent XSS
+            text = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Headers (must be done before other formatting)
+            // Add <br> before headings for spacing
+            text = text.replace(/^######\s+(.+)$/gm, '<br><h6>$1</h6>');
+            text = text.replace(/^#####\s+(.+)$/gm, '<br><h5>$1</h5>');
+            text = text.replace(/^####\s+(.+)$/gm, '<br><h4>$1</h4>');
+            text = text.replace(/^###\s+(.+)$/gm, '<br><h3>$1</h3>');
+            text = text.replace(/^##\s+(.+)$/gm, '<br><h2>$1</h2>');
+            text = text.replace(/^#\s+(.+)$/gm, '<br><h1>$1</h1>');
+
+            // Code blocks (before inline code)
+            text = text.replace(/```(\w+)?\n([\s\S]*?)```/g, function(match, lang, code) {
+                const language = lang || 'plaintext';
+                return `<pre><code class="language-${language}">${code.trim()}</code></pre>`;
+            });
+
+            // Inline code
+            text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+            // Bold and italic (must be in correct order to avoid conflicts)
+            text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>'); // Bold + Italic
+            text = text.replace(/___(.+?)___/g, '<strong><em>$1</em></strong>'); // Bold + Italic (alt)
+            text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'); // Bold
+            text = text.replace(/__(.+?)__/g, '<strong>$1</strong>'); // Bold (alt)
+            text = text.replace(/\*(.+?)\*/g, '<em>$1</em>'); // Italic
+            text = text.replace(/_(.+?)_/g, '<em>$1</em>'); // Italic (alt)
+
+            // Strikethrough
+            text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+            // Links
+            text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+            // Images
+            text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width: 100%;">');
+
+            // Blockquotes (before line breaks)
+            text = text.replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+            // Merge consecutive blockquotes
+            text = text.replace(/(<\/blockquote>)\s*(<blockquote>)/g, '<br>');
+
+            // Horizontal rules
+            text = text.replace(/^([-*_]){3,}$/gm, '<hr>');
+
+            // Enhanced list handling with proper line-by-line processing
+            let lines = text.split('\n');
+            let inList = false;
+            let listType = null;
+            let result = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+
+                // Check for unordered list item (-, *, or +)
+                if (/^\s*[-*+]\s+(.+)/.test(line)) {
+                    if (!inList || listType !== 'ul') {
+                        if (inList) result.push(`</${listType}>`);
+                        result.push('<ul style="padding-left: 24px;">'); // 4-space indent (24px = 1.5em)
+                        inList = true;
+                        listType = 'ul';
+                    }
+                    line = line.replace(/^\s*[-*+]\s+(.+)/, '<li>$1</li>');
+                    result.push(line);
+                }
+                // Check for ordered list item (1., 2., etc.)
+                else if (/^\s*\d+\.\s+(.+)/.test(line)) {
+                    if (!inList || listType !== 'ol') {
+                        if (inList) result.push(`</${listType}>`);
+                        result.push('<ol style="padding-left: 24px;">'); // 4-space indent (24px = 1.5em)
+                        inList = true;
+                        listType = 'ol';
+                    }
+                    line = line.replace(/^\s*\d+\.\s+(.+)/, '<li>$1</li>');
+                    result.push(line);
+                }
+                // Not a list item
+                else {
+                    if (inList) {
+                        result.push(`</${listType}>`);
+                        inList = false;
+                        listType = null;
+                    }
+                    result.push(line);
+                }
+            }
+
+            // Close any open list
+            if (inList) {
+                result.push(`</${listType}>`);
+            }
+
+            // Join lines but remove line breaks between list items
+            text = result.join('\n');
+
+            // Remove line breaks between consecutive <li> tags
+            text = text.replace(/<\/li>\n<li>/g, '</li><li>');
+
+            // Paragraphs (double newlines)
+            text = text.replace(/\n\s*\n/g, '<br><br>');
+
+            // Single line breaks
+            text = text.replace(/\n/g, '<br>');
+
+            // Clean up: remove extra <br> around block elements
+            text = text.replace(/<br>(<h[1-6]>)/g, '$1');
+            text = text.replace(/(<\/h[1-6]>)<br>/g, '$1');
+            text = text.replace(/<br>(<ul>)/g, '$1');
+            text = text.replace(/(<\/ul>)<br>/g, '$1');
+            text = text.replace(/<br>(<ol>)/g, '$1');
+            text = text.replace(/(<\/ol>)<br>/g, '$1');
+            text = text.replace(/<br>(<pre>)/g, '$1');
+            text = text.replace(/(<\/pre>)<br>/g, '$1');
+            text = text.replace(/<br>(<blockquote>)/g, '$1');
+            text = text.replace(/(<\/blockquote>)<br>/g, '$1');
+            text = text.replace(/<br>(<hr>)/g, '$1');
+            text = text.replace(/(<hr>)<br>/g, '$1');
+
             return text;
         }
 
