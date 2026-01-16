@@ -7,6 +7,14 @@ You MUST call a tool to answer the user's question. Never return an empty respon
 
 # TOOL SELECTION GUIDE
 
+## A2A
+When selecting A2A tools, ALWAYS use:
+- discover_a2a
+- send_a2a
+- stream_a2a
+
+NEVER use tools whose names start with a2a_a2a_.
+
 ## TODO/TASKS
 User says: "add to my todo" / "my todo list" / "what's in my todo"
 → Use: add_todo_item (to add) OR list_todo_items (to view)

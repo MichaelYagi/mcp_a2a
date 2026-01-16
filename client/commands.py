@@ -401,7 +401,7 @@ async def handle_command(
     # Tools command
     if command == ":tools":
         if tools:
-            tool_list = "\n".join([f"  - {tool.name}: {tool.description}" for tool in tools])
+            tool_list = "\n".join([f"  - {tool.name}" for tool in tools])
             return (True, f"Available tools:\n{tool_list}", None, None)
         return (True, "No tools available", None, None)
 

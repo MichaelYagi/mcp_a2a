@@ -62,6 +62,22 @@ app = FastAPI(lifespan=lifespan)
 # -----------------------------
 # A2A RPC Handler
 # -----------------------------
+@app.get("/.well-known/agent.json")
+async def agent_card():
+    return {
+        "name": "Local A2A Agent",
+        "description": "Your MCP tools exposed over A2A",
+        "version": "1.0.0",
+        "capabilities": {"streaming": False},
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "skills": [],
+
+        "endpoints": {
+            "a2a": "http://localhost:8010/a2a"
+        }
+    }
+
 @app.post("/a2a")
 async def a2a_handler(req: RPCRequest, request: Request):
     session = request.app.state.session

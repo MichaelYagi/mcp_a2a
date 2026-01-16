@@ -1,10 +1,13 @@
 import json
+import os
+import httpx
+import logging
+
 from typing import List, Optional
 from mcp.server.fastmcp import FastMCP
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any
-import logging
 
 # Load environment variables from .env file
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -1717,6 +1720,61 @@ def plex_get_stats() -> str:
         logger.error(f"❌ [TOOL] plex_get_stats failed: {e}")
         return json.dumps({"error": str(e)})
 
+# ─────────────────────────────────────────────
+# A2A tools
+# ─────────────────────────────────────────────
+def get_a2a_endpoint():
+    endpoint = os.getenv("A2A_ENDPOINT")
+    if not endpoint:
+        raise ValueError("A2A_ENDPOINT environment variable is not set")
+    return endpoint
+
+@mcp.tool()
+def discover_a2a() -> str:
+    """
+    Fetch the remote agent's Agent Card from A2A_ENDPOINT.
+    """
+    endpoint = get_a2a_endpoint()
+    with httpx.Client(timeout=10) as client:
+        resp = client.get(endpoint)
+        resp.raise_for_status()
+        return json.dumps(resp.json(), indent=2)
+
+@mcp.tool()
+def send_a2a(message: str) -> str:
+    """
+    Send a message to the remote A2A agent using message/send.
+    """
+    # 1. Fetch agent card
+    A2A_ENDPOINT = os.getenv("A2A_ENDPOINT", "").strip()
+    card = httpx.get(A2A_ENDPOINT).json()
+
+    # 2. Extract RPC endpoint
+    rpc_url = card["endpoints"]["a2a"]
+
+    # 3. Build JSON-RPC payload
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "a2a.call",
+        "params": {
+            "tool": "message",
+            "arguments": {"message": message}
+        }
+    }
+
+    # 4. Send RPC request
+    resp = httpx.post(rpc_url, json=payload)
+    resp.raise_for_status()
+
+    # 5. Return readable output
+    data = resp.json()
+    result = data.get("result", None)
+
+    if result is None:
+        return "The A2A agent responded, but did not include a result field."
+
+    return f"The A2A agent replied: {result}"
 
 if __name__ == "__main__":
     logger.info(f"🛠 [server] mcp server running with stdio enabled")
