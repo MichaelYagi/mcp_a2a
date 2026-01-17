@@ -1008,7 +1008,119 @@ def create_langgraph_agent(llm_with_tools, tools):
     workflow = StateGraph(AgentState)
 
     workflow.add_node("agent", call_model)
-    workflow.add_node("tools", ToolNode(tools))
+
+    async def call_tools_with_stop_check(state: AgentState):
+        """
+        Custom tool executor that checks stop signal before AND during execution
+        """
+        logger = logging.getLogger("mcp_client")
+
+        # Check stop BEFORE executing tools
+        if is_stop_requested():
+            logger.warning("🛑 call_tools: Stop requested - skipping tool execution")
+            empty_response = AIMessage(content="Tool execution cancelled by user.")
+            return {
+                "messages": state["messages"] + [empty_response],
+                "tools": state.get("tools", {}),
+                "llm": state.get("llm"),
+                "ingest_completed": state.get("ingest_completed", False),
+                "stopped": True
+            }
+
+        # Use the standard ToolNode for actual execution
+        from langchain_core.messages import ToolMessage
+
+        last_message = state["messages"][-1]
+        tool_calls = getattr(last_message, "tool_calls", [])
+
+        if not tool_calls:
+            logger.warning("⚠️ call_tools: No tool calls found")
+            return state
+
+        tool_messages = []
+
+        for tool_call in tool_calls:
+            # Check stop BEFORE EACH tool execution
+            if is_stop_requested():
+                logger.warning(f"🛑 call_tools: Stop requested - halting remaining tool calls")
+                error_msg = ToolMessage(
+                    content="Tool execution stopped by user",
+                    tool_call_id=tool_call.get("id", "stopped"),
+                    name=tool_call.get("name", "unknown")
+                )
+                tool_messages.append(error_msg)
+                break
+
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("args", {})
+            tool_id = tool_call.get("id")
+
+            logger.info(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
+
+            # Get the tool
+            tools_dict = state.get("tools", {})
+            tool = tools_dict.get(tool_name)
+
+            if not tool:
+                logger.error(f"❌ Tool '{tool_name}' not found")
+                error_msg = ToolMessage(
+                    content=f"Error: Tool '{tool_name}' not found",
+                    tool_call_id=tool_id,
+                    name=tool_name
+                )
+                tool_messages.append(error_msg)
+                continue
+
+            try:
+                # Execute the tool
+                tool_start = time.time()
+                result = await tool.ainvoke(tool_args)
+                tool_duration = time.time() - tool_start
+
+                # Track metrics
+                if METRICS_AVAILABLE:
+                    metrics["tool_calls"][tool_name] += 1
+                    metrics["tool_times"][tool_name].append((time.time(), tool_duration))
+
+                # Handle result
+                if isinstance(result, list) and len(result) > 0:
+                    if hasattr(result[0], 'text'):
+                        result = result[0].text
+
+                result_msg = ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_id,
+                    name=tool_name
+                )
+                tool_messages.append(result_msg)
+
+                logger.info(f"✅ Tool {tool_name} completed in {tool_duration:.2f}s")
+
+            except Exception as e:
+                logger.error(f"❌ Tool {tool_name} failed: {e}")
+
+                if METRICS_AVAILABLE:
+                    metrics["tool_errors"][tool_name] += 1
+
+                error_msg = ToolMessage(
+                    content=f"Error: {str(e)}",
+                    tool_call_id=tool_id,
+                    name=tool_name
+                )
+                tool_messages.append(error_msg)
+
+        # Check if we stopped during execution
+        stopped = is_stop_requested()
+
+        return {
+            "messages": state["messages"] + tool_messages,
+            "tools": state.get("tools", {}),
+            "llm": state.get("llm"),
+            "ingest_completed": state.get("ingest_completed", False),
+            "stopped": stopped
+        }
+
+    workflow.add_node("tools", call_tools_with_stop_check)
     workflow.add_node("rag", rag_node)
     workflow.add_node("ingest", ingest_node)
 

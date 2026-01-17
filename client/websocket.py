@@ -1,6 +1,6 @@
 """
-WebSocket Module (WITH REAL-TIME STOP HANDLING)
-Handles WebSocket servers for chat, logs, and system monitor
+WebSocket Module with TRUE Concurrent Processing
+Uses asyncio.create_task to handle operations in background
 """
 
 import asyncio
@@ -34,11 +34,59 @@ async def broadcast_message(message_type, data):
             return_exceptions=True
         )
 
+
+async def process_query(websocket, prompt, agent_ref, conversation_state, run_agent_fn, logger, tools):
+    """
+    Process a query in the background (as a task)
+    This allows the WebSocket to continue receiving messages (like :stop)
+    """
+    try:
+        print(f"\n> {prompt}")
+        await broadcast_message("user_message", {"text": prompt})
+
+        agent = agent_ref[0]
+        result = await run_agent_fn(agent, conversation_state, prompt, logger, tools)
+
+        final_message = result["messages"][-1]
+        assistant_text = final_message.content
+
+        print("\n" + assistant_text + "\n")
+
+        await broadcast_message("assistant_message", {
+            "text": assistant_text,
+            "multi_agent": result.get("multi_agent", False),
+            "a2a": result.get("a2a", False)
+        })
+
+        await websocket.send(json.dumps({
+            "type": "complete",
+            "stopped": result.get("stopped", False)
+        }))
+
+    except Exception as e:
+        logger.error(f"❌ Error processing query: {e}")
+        await websocket.send(json.dumps({
+            "type": "error",
+            "text": str(e)
+        }))
+        await websocket.send(json.dumps({
+            "type": "complete",
+            "stopped": False
+        }))
+
+
 async def websocket_handler(websocket, agent_ref, tools, logger, conversation_state, run_agent_fn,
                             models_module, model_name, system_prompt, orchestrator=None,
                             multi_agent_state=None, a2a_state=None):
-    """Handle WebSocket connections for chat (WITH MULTI-AGENT STATE + A2A + REAL-TIME STOP)"""
+    """
+    Handle WebSocket connections with TRUE concurrent processing
+
+    KEY: Long operations run as background tasks, allowing :stop to be processed immediately
+    """
     CONNECTED_WEBSOCKETS.add(websocket)
+
+    # Track current background task (if any)
+    current_task = None
 
     try:
         async for raw in websocket:
@@ -51,47 +99,41 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
             except json.JSONDecodeError:
                 data = {"type": "user", "text": raw}
 
-            if data.get("type") == "user" or "text" in data:
-                prompt = data.get("text")
+            # ═══════════════════════════════════════════════════════════
+            # IMMEDIATE STOP HANDLING - Always processed immediately
+            # ═══════════════════════════════════════════════════════════
+            if data.get("type") == "user" and data.get("text") == ":stop":
+                import sys
 
-                # Check for :stop first
-                if prompt == ":stop":
-                    import sys
+                logger.warning("🛑 STOP SIGNAL ACTIVATED - Operations will halt at next checkpoint")
 
-                    # Log the stop request
-                    logger.warning("🛑 STOP SIGNAL ACTIVATED - Operations will halt at next checkpoint")
+                # Set stop flag immediately
+                request_stop()
 
-                    # Trigger the stop
-                    request_stop()
+                # Print to CLI
+                print("\n🛑 Stop requested - operation will halt at next checkpoint")
+                print("   This may take a few seconds for the current step to complete.")
+                print("   Watch for '🛑 Stopped' messages below.\n")
+                sys.stdout.flush()
 
-                    # Print to CLI stdout so it's visible there too
-                    print("\n🛑 Stop requested - operation will halt at next checkpoint")
-                    print("   This may take a few seconds for the current step to complete.")
-                    print("   Watch for '🛑 Stopped' messages below.\n")
-                    sys.stdout.flush()
+                # Send IMMEDIATE response to web UI
+                await websocket.send(json.dumps({
+                    "type": "assistant_message",
+                    "text": "🛑 Stop requested - operation will halt at next checkpoint.\n\nThis may take a few seconds for the current step to complete."
+                }))
 
-                    # Send to web UI
-                    await broadcast_message("assistant_message", {
-                        "text": "🛑 Stop requested - operation will halt at next checkpoint.\n\nThis may take a few seconds for the current step to complete."
-                    })
-                    continue
+                # Send completion immediately so UI resets
+                await websocket.send(json.dumps({
+                    "type": "complete",
+                    "stopped": True
+                }))
 
-                # Handle :a2a commands specifically
-                if prompt.startswith(":a2a"):
-                    result = await handle_a2a_commands(prompt, orchestrator)
-                    if result:
-                        await broadcast_message("assistant_message", {"text": result})
-                        continue
+                continue  # Don't process further
 
-                # Handle :multi commands specifically
-                if prompt.startswith(":multi"):
-                    from client.commands import handle_multi_agent_commands
-                    result = await handle_multi_agent_commands(prompt, orchestrator, multi_agent_state)
-                    if result:
-                        await broadcast_message("assistant_message", {"text": result})
-                        continue
+            # ═══════════════════════════════════════════════════════════
+            # Fast operations - process synchronously
+            # ═══════════════════════════════════════════════════════════
 
-            # Handle system stats subscription
             if data.get("type") == "subscribe_system_stats":
                 SYSTEM_MONITOR_CLIENTS.add(websocket)
                 await websocket.send(json.dumps({
@@ -124,7 +166,6 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                     else {"role": "assistant", "text": m.content}
                     for m in conversation_state["messages"]
                 ]
-
                 await websocket.send(json.dumps({
                     "type": "history_sync",
                     "history": history_payload
@@ -132,7 +173,6 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                 continue
 
             if data.get("type") == "metrics_request":
-                # Try to import metrics with fallback
                 try:
                     from client.metrics import prepare_metrics
                     metrics_data = prepare_metrics()
@@ -141,14 +181,12 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                         from metrics import prepare_metrics
                         metrics_data = prepare_metrics()
                     except ImportError:
-                        # Return empty metrics if not available
                         metrics_data = {
                             "agent": {"runs": 0, "errors": 0, "error_rate": 0, "avg_time": 0, "times": []},
                             "llm": {"calls": 0, "errors": 0, "avg_time": 0, "times": []},
                             "tools": {"total_calls": 0, "total_errors": 0, "per_tool": {}},
                             "overall_errors": 0
                         }
-
                 await websocket.send(json.dumps({
                     "type": "metrics_response",
                     "metrics": metrics_data
@@ -157,7 +195,6 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
 
             if data.get("type") == "switch_model":
                 model_name = data.get("model")
-
                 new_agent = await models_module.switch_model(
                     model_name,
                     tools,
@@ -165,26 +202,49 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                     create_agent_fn=create_langgraph_agent,
                     a2a_state=a2a_state
                 )
-
                 if new_agent is None:
                     await websocket.send(json.dumps({
                         "type": "model_error",
                         "message": f"Model '{model_name}' is not installed."
                     }))
                     continue
-
                 agent_ref[0] = new_agent
-
                 await websocket.send(json.dumps({
                     "type": "model_switched",
                     "model": model_name
                 }))
                 continue
 
+            # ═══════════════════════════════════════════════════════════
+            # User messages - Create background task for long operations
+            # ═══════════════════════════════════════════════════════════
             if data.get("type") == "user" or "text" in data:
                 prompt = data.get("text")
 
-                # Handle commands (WITH MULTI-AGENT STATE AND A2A STATE PASSING)
+                # Handle :a2a commands (fast - process inline)
+                if prompt.startswith(":a2a"):
+                    result = await handle_a2a_commands(prompt, orchestrator)
+                    if result:
+                        await broadcast_message("assistant_message", {"text": result})
+                        await websocket.send(json.dumps({
+                            "type": "complete",
+                            "stopped": False
+                        }))
+                        continue
+
+                # Handle :multi commands (fast - process inline)
+                if prompt.startswith(":multi"):
+                    from client.commands import handle_multi_agent_commands
+                    result = await handle_multi_agent_commands(prompt, orchestrator, multi_agent_state)
+                    if result:
+                        await broadcast_message("assistant_message", {"text": result})
+                        await websocket.send(json.dumps({
+                            "type": "complete",
+                            "stopped": False
+                        }))
+                        continue
+
+                # Handle other commands (fast - process inline)
                 if prompt.startswith(":"):
                     handled, response, new_agent, new_model = await handle_command(
                         prompt, tools, model_name, conversation_state, models_module,
@@ -195,7 +255,6 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                         multi_agent_state=multi_agent_state,
                         a2a_state=a2a_state
                     )
-
                     if handled:
                         if response:
                             await broadcast_message("assistant_message", {"text": response})
@@ -203,28 +262,39 @@ async def websocket_handler(websocket, agent_ref, tools, logger, conversation_st
                             agent_ref[0] = new_agent
                         if new_model:
                             model_name = new_model
+                        await websocket.send(json.dumps({
+                            "type": "complete",
+                            "stopped": False
+                        }))
                         continue
 
-                print(f"\n> {prompt}")
+                # ═══════════════════════════════════════════════════════════
+                # Normal query - Run as BACKGROUND TASK
+                # This allows WebSocket to continue processing messages (like :stop)
+                # ═══════════════════════════════════════════════════════════
 
-                await broadcast_message("user_message", {"text": prompt})
+                # Cancel previous task if still running (optional)
+                if current_task and not current_task.done():
+                    logger.warning("⚠️ Cancelling previous task")
+                    current_task.cancel()
 
-                agent = agent_ref[0]
-                result = await run_agent_fn(agent, conversation_state, prompt, logger, tools)
+                # Create background task for query processing
+                current_task = asyncio.create_task(
+                    process_query(websocket, prompt, agent_ref, conversation_state,
+                                run_agent_fn, logger, tools)
+                )
 
-                final_message = result["messages"][-1]
-                assistant_text = final_message.content
+                # Don't await - let it run in background!
+                # The WebSocket loop continues immediately and can process :stop
 
-                print("\n" + assistant_text + "\n")
-
-                await broadcast_message("assistant_message", {
-                    "text": assistant_text,
-                    "multi_agent": result.get("multi_agent", False),
-                    "a2a": result.get("a2a", False)
-                })
     finally:
+        # Cancel any running task when connection closes
+        if current_task and not current_task.done():
+            current_task.cancel()
+
         CONNECTED_WEBSOCKETS.discard(websocket)
         SYSTEM_MONITOR_CLIENTS.discard(websocket)
+
 
 async def start_websocket_server(agent, tools, logger, conversation_state, run_agent_fn, models_module,
                                  model_name, system_prompt, orchestrator=None, multi_agent_state=None,

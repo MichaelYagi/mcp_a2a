@@ -3,11 +3,12 @@ CLI Module (WITH MULTI-AGENT SUPPORT + A2A - FIXED STATE + REAL-TIME STOP)
 Handles command-line interface and user input
 """
 
-from prompt_toolkit import prompt
 import asyncio
 import threading
-from queue import Queue
+import sys
 
+from prompt_toolkit import prompt
+from queue import Queue
 from client.websocket import broadcast_message
 from client.commands import handle_command, get_commands_list, handle_a2a_commands, handle_multi_agent_commands
 from client.stop_signal import request_stop
@@ -50,6 +51,7 @@ async def cli_input_loop(agent, logger, tools, model_name, conversation_state, r
                     print("\n🛑 Stop requested - operation will halt at next checkpoint")
                     print("   This may take a few seconds for the current step to complete.")
                     print("   Watch for '🛑 Stopped' messages below.\n")
+                    sys.stdout.flush()
                     await broadcast_message("cli_stop_message", {"text": "🛑 Stop requested"})
                     continue
 

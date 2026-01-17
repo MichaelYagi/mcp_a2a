@@ -49,6 +49,10 @@ logger = logging.getLogger("mcp_server")
 logger.info("🚀 Server logging initialized - writing to logs/mcp-server.log")
 
 # ─────────────────────────────────────────────
+# Stop Signal Support
+# ─────────────────────────────────────────────
+from client.stop_signal import is_stop_requested
+# ─────────────────────────────────────────────
 # Knowledge Base Tools
 # ─────────────────────────────────────────────
 from tools.knowledge_base.kb_add import kb_add
@@ -1158,31 +1162,23 @@ def rag_add_tool(text: str, source: str | None = None, chunk_size: int = 500) ->
 @mcp.tool()
 def rag_search_tool(query: str, top_k: int = 5, min_score: float = 0.0) -> str:
     """
-    Search the RAG database using semantic similarity.
-
-    Args:
-        query (str, required): What to search for (e.g., "scenes about betrayal", "machine learning concepts")
-        top_k (int, optional): Maximum number of results to return (default: 5)
-        min_score (float, optional): Minimum similarity threshold 0.0-1.0 (default: 0.0)
-
-    Returns:
-        JSON string with:
-        - results: Array of matches, each containing:
-          - text: The matching text chunk
-          - score: Similarity score (0-1, higher is better)
-          - source: Source identifier
-          - metadata: Additional context
-        - query: The search query used
-        - total_results: Number of results returned
-
-    Uses bge-large embeddings for semantic matching. Returns most relevant text chunks with similarity scores.
-
-    Use when looking for specific scenes/dialogue, finding relevant context, or answering questions about stored knowledge.
+    Search the RAG database using semantic similarity with STOP SIGNAL support.
     """
     logger.info(f"🛠 [server] rag_search_tool called with query: {query}, top_k: {top_k}")
+
+    # Check stop BEFORE expensive search
+    if is_stop_requested():
+        logger.warning("🛑 rag_search_tool: Stop requested - skipping search")
+        return json.dumps({
+            "results": [],
+            "query": query,
+            "total_results": 0,
+            "stopped": True,
+            "message": "Search cancelled by user"
+        }, indent=2)
+
     result = rag_search(query, top_k, min_score)
     return json.dumps(result, indent=2)
-
 
 @mcp.tool()
 def rag_diagnose_tool() -> str:
@@ -1259,10 +1255,21 @@ def rag_status_tool() -> str:
 @mcp.tool()
 async def plex_ingest_batch(limit: int = 5, rescan_no_subtitles: bool = False) -> str:
     """
-        Ingest Plex items into RAG
-        Uses coroutines to parallelize Plex media into RAG database
+    Ingest Plex items into RAG with STOP SIGNAL support
+    Uses coroutines to parallelize Plex media into RAG database
     """
     logger.info(f"🛠 [server] plex_ingest_batch called with limit: {limit}, rescan: {rescan_no_subtitles}")
+
+    # Check stop BEFORE starting
+    if is_stop_requested():
+        logger.warning("🛑 plex_ingest_batch: Stop requested - skipping ingestion")
+        return json.dumps({
+            "ingested": [],
+            "remaining": 0,
+            "total_ingested": 0,
+            "stopped": True,
+            "stop_reason": "Stopped before ingestion started"
+        }, indent=2)
 
     # Must await the async function!
     result = await ingest_next_batch(limit, rescan_no_subtitles)
@@ -1470,22 +1477,43 @@ def plex_find_unprocessed(limit: int = 5, rescan_no_subtitles: bool = False) -> 
 @mcp.tool()
 async def plex_ingest_items(item_ids: str) -> str:
     """
-    Ingest multiple Plex items in parallel (ASYNC).
+    Ingest multiple Plex items in parallel (ASYNC) with STOP SIGNAL support.
 
     Args:
         item_ids: Comma-separated list of Plex media IDs (e.g., "12345,12346,12347")
                   OR "auto:N" to automatically find N unprocessed items
 
     Returns:
-        JSON with ingestion results
+        JSON string with ingestion results
     """
     logger.info(f"🚀 [TOOL] plex_ingest_items called with IDs: {item_ids}")
+
+    # Check stop BEFORE starting
+    if is_stop_requested():
+        logger.warning("🛑 plex_ingest_items: Stop requested - skipping ingestion")
+        return json.dumps({
+            "total_processed": 0,
+            "ingested_count": 0,
+            "skipped_count": 0,
+            "stopped": True,
+            "message": "Stopped before ingestion started"
+        })
 
     try:
         # Check if using auto mode
         if item_ids.startswith("auto:"):
             limit = int(item_ids.split(":")[1])
             logger.info(f"🔍 Auto mode: finding {limit} unprocessed items")
+
+            # Check stop BEFORE finding items
+            if is_stop_requested():
+                logger.warning("🛑 Stopped during item discovery")
+                return json.dumps({
+                    "total_processed": 0,
+                    "stopped": True,
+                    "message": "Stopped during item discovery"
+                })
+
             media_items = find_unprocessed_items(limit, False)
             if not media_items:
                 return json.dumps({
@@ -1510,6 +1538,17 @@ async def plex_ingest_items(item_ids: str) -> str:
             media_items = []
 
             for item_id in ids_list:
+                # Check stop DURING item fetching
+                if is_stop_requested():
+                    logger.warning(f"🛑 Stopped while fetching items ({len(media_items)} fetched so far)")
+                    # Return what we have so far
+                    return json.dumps({
+                        "total_processed": 0,
+                        "items_fetched": len(media_items),
+                        "stopped": True,
+                        "message": f"Stopped while fetching items ({len(media_items)}/{len(ids_list)} fetched)"
+                    })
+
                 try:
                     # Fetch item from Plex
                     item = plex.fetchItem(int(item_id))
@@ -1544,14 +1583,28 @@ async def plex_ingest_items(item_ids: str) -> str:
         import asyncio
         import time
 
+        # Check stop BEFORE processing
+        if is_stop_requested():
+            logger.warning("🛑 Stopped before processing items")
+            return json.dumps({
+                "total_processed": 0,
+                "items_ready": len(media_items),
+                "stopped": True,
+                "message": f"Stopped before processing {len(media_items)} items"
+            })
+
         start_time = time.time()
 
         logger.info(f"🚀 Processing {len(media_items)} items in parallel")
 
         # Process in parallel using existing parallelization
+        # Note: ingest_batch_parallel_conservative should also check stop internally
         results = await ingest_batch_parallel_conservative(media_items)
 
         duration = time.time() - start_time
+
+        # Check if stopped during processing
+        stopped = is_stop_requested()
 
         # Categorize results
         ingested = [r for r in results if r.get("status") == "success"]
@@ -1565,10 +1618,15 @@ async def plex_ingest_items(item_ids: str) -> str:
             "skipped": skipped,
             "duration": round(duration, 2),
             "mode": "parallel",
-            "concurrent_limit": 3
+            "concurrent_limit": 3,
+            "stopped": stopped
         }
 
-        logger.info(f"✅ [TOOL] Batch complete: {len(ingested)} ingested, {len(skipped)} skipped in {duration:.2f}s")
+        if stopped:
+            summary["stop_message"] = "Processing was stopped mid-execution"
+
+        logger.info(
+            f"✅ [TOOL] Batch complete: {len(ingested)} ingested, {len(skipped)} skipped in {duration:.2f}s (stopped={stopped})")
         return json.dumps(summary, indent=2)
 
     except Exception as e:
@@ -1581,12 +1639,22 @@ async def plex_ingest_items(item_ids: str) -> str:
 @mcp.tool()
 async def plex_ingest_single(media_id: str) -> str:
     """
-    Ingest a single Plex item.
+    Ingest a single Plex item with STOP SIGNAL support.
 
     Args:
         media_id: Plex media ID, or "auto" to automatically find one unprocessed item
     """
     logger.info(f"💾 [TOOL] plex_ingest_single called for media_id: {media_id}")
+
+    # Check stop BEFORE starting
+    if is_stop_requested():
+        logger.warning("🛑 plex_ingest_single: Stop requested - skipping ingestion")
+        return json.dumps({
+            "title": f"Item {media_id}",
+            "id": media_id,
+            "status": "stopped",
+            "reason": "Stopped before ingestion started"
+        })
 
     try:
         # Handle auto mode
@@ -1622,6 +1690,16 @@ async def plex_ingest_single(media_id: str) -> str:
                     "status": "error",
                     "reason": f"Could not fetch item: {str(e)}"
                 })
+
+        # Check stop BEFORE processing
+        if is_stop_requested():
+            logger.warning("🛑 Stopped before processing item")
+            return json.dumps({
+                "title": media_item.get("title", media_id),
+                "id": media_id,
+                "status": "stopped",
+                "reason": "Stopped before processing"
+            })
 
         # Process the item
         logger.info(f"📥 Extracting subtitles for: {media_item.get('title', media_id)}")
