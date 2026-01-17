@@ -1614,19 +1614,18 @@
                 return;
             }
 
+            // ═══════════════════════════════════════════════════════════
+            // SKIP user_message echoes from server (we already showed them locally)
+            // ═══════════════════════════════════════════════════════════
             if (data.type === "cli_user_message" || data.type === "user_message") {
-                // Check if it's a multi-agent command
-                if (data.text.startsWith(":multi") || data.text === ":stop") {
-                    return; // Don't show commands in chat
+                // Skip - we already added this message locally in send()
+                // But still update UI state for processing
+                if (!data.text.startsWith(":")) {
+                    showThinking();
+                    isProcessing = true;
+                    sendBtn.disabled = true;
+                    status.textContent = "Processing…";
                 }
-
-                addMessage(data.text, "user");
-                showThinking();
-                isProcessing = true;
-                sendBtn.style.display = 'flex';
-                sendBtn.disabled = true;
-                // stopBtn.style.display = 'flex';
-                status.textContent = "Processing…";
                 return;
             }
 
@@ -1634,13 +1633,12 @@
                 if (data.text.includes("🛑") || data.text.toLowerCase().includes("interrupted")) {
                     isProcessing = false;
                     hideThinking();
-                    resetControlButtons(); // Helper to swap buttons
+                    resetControlButtons();
                     return;
                 }
 
                 // Check if it's a multi-agent command response
                 if (data.text.includes("Multi-agent mode")) {
-                    // Update toggle if needed based on response
                     if (data.text.includes("ENABLED")) {
                         multiAgentToggle.checked = true;
                         multiAgentEnabled = true;
@@ -1660,12 +1658,27 @@
 
                 addMessage(data.text, "assistant", lastResponseWasMultiAgent);
                 isProcessing = false;
-                // stopBtn.style.display = 'none';
                 sendBtn.style.display = 'flex';
                 sendBtn.disabled = false;
                 sendBtn.style.opacity = '1';
                 sendBtn.style.cursor = "pointer";
                 updateStatusWithMode();
+                return;
+            }
+
+            if (data.type === "complete") {
+                // Server says processing is complete
+                hideThinking();
+                isProcessing = false;
+                sendBtn.disabled = false;
+                sendBtn.style.opacity = '1';
+                sendBtn.style.cursor = "pointer";
+
+                if (data.stopped) {
+                    status.textContent = "Stopped";
+                } else {
+                    updateStatusWithMode();
+                }
                 return;
             }
 
@@ -1686,7 +1699,6 @@
                     chatHistory = [];
                     isProcessing = false;
                     sendBtn.disabled = false;
-                    // stopBtn.style.display = 'none';
                     sendBtn.style.display = 'flex';
                     updateStatusWithMode();
                     hideThinking();
@@ -1700,13 +1712,11 @@
                         isProcessing = true;
                         sendBtn.style.display = 'flex';
                         sendBtn.disabled = true;
-                        // stopBtn.style.display = 'flex';
                         status.textContent = "Processing…";
                         showThinking();
                     } else {
                         isProcessing = false;
                         sendBtn.disabled = false;
-                        // stopBtn.style.display = 'none';
                         sendBtn.style.display = 'flex';
                         updateStatusWithMode();
                         hideThinking();
@@ -1917,7 +1927,6 @@
         // -------------------------
         // Send message
         // -------------------------
-        // Add logging to your send function to see what's happening
         function send() {
             sendBtn.style.opacity = '0.5';
             sendBtn.disabled = true;
@@ -1941,35 +1950,63 @@
 
             if (ws.readyState !== WebSocket.OPEN) {
                 status.textContent = "Cannot send: WebSocket not connected";
+                sendBtn.style.opacity = '1';
+                sendBtn.disabled = false;
+                sendBtn.style.cursor = "pointer";
                 return;
             }
 
+            // ═══════════════════════════════════════════════════════════
+            // Show ALL user input in chat (including commands)
+            // ═══════════════════════════════════════════════════════════
+            addMessage(text, "user");
+
+            // Clear input immediately
+            input.value = "";
+
+            // ═══════════════════════════════════════════════════════════
             // Special handling for :stop command
+            // ═══════════════════════════════════════════════════════════
             if (text === ":stop") {
                 ws.send(JSON.stringify({
                     type: "user",
                     text: ":stop"
                 }));
-                input.value = "";
 
                 isProcessing = false;
-                status.textContent = "Stopping";
+                status.textContent = "Stop signal sent...";
+                sendBtn.style.opacity = '1';
+                sendBtn.disabled = false;
+                sendBtn.style.cursor = "pointer";
+
                 return;
             }
 
-            // Normal message handling
+            // ═══════════════════════════════════════════════════════════
+            // Handle commands that return quickly (don't show thinking)
+            // ═══════════════════════════════════════════════════════════
+            const quickCommands = [':commands', ':tools', ':model', ':models', ':stats',
+                                  ':multi', ':a2a', ':health', ':metrics', ':clear history'];
+
+            const isQuickCommand = quickCommands.some(cmd => text.startsWith(cmd));
+
+            // ═══════════════════════════════════════════════════════════
+            // Normal message/command handling
+            // ═══════════════════════════════════════════════════════════
             isProcessing = true;
-            sendBtn.style.display = 'flex';
             sendBtn.disabled = true;
             status.textContent = "Processing…";
             lastResponseWasMultiAgent = false;
+
+            // Only show thinking for non-command queries
+            if (!isQuickCommand) {
+                showThinking();
+            }
 
             ws.send(JSON.stringify({
                 type: "user",
                 text
             }));
-
-            input.value = "";
         }
 
         // -------------------------
