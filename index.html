@@ -1071,7 +1071,7 @@
 
             <div id="inputRow">
                 <textarea id="input" placeholder="Type your message..."></textarea>
-                <button id="sendBtn" onclick="send()">Send</button>
+                <button id="sendBtn">Send</button>
                 <button id="stopBtn" onclick="stopProcessing()">Stop</button>
             </div>
 
@@ -1663,6 +1663,8 @@
                 // stopBtn.style.display = 'none';
                 sendBtn.style.display = 'flex';
                 sendBtn.disabled = false;
+                sendBtn.style.opacity = '1';
+                sendBtn.style.cursor = "pointer";
                 updateStatusWithMode();
                 return;
             }
@@ -1915,19 +1917,48 @@
         // -------------------------
         // Send message
         // -------------------------
+        // Add logging to your send function to see what's happening
         function send() {
-            if (isProcessing) return;
+            sendBtn.style.opacity = '0.5';
+            sendBtn.disabled = true;
+            sendBtn.style.cursor = "not-allowed";
 
             const text = input.value.trim();
-            if (!text) return;
+
+            if (isProcessing && text !== ":stop") {
+                sendBtn.style.opacity = '1';
+                sendBtn.disabled = false;
+                sendBtn.style.cursor = "pointer";
+                return;
+            }
+
+            if (!text) {
+                sendBtn.style.opacity = '1';
+                sendBtn.disabled = false;
+                sendBtn.style.cursor = "pointer";
+                return;
+            }
 
             if (ws.readyState !== WebSocket.OPEN) {
                 status.textContent = "Cannot send: WebSocket not connected";
                 return;
             }
 
+            // Special handling for :stop command
+            if (text === ":stop") {
+                ws.send(JSON.stringify({
+                    type: "user",
+                    text: ":stop"
+                }));
+                input.value = "";
+
+                isProcessing = false;
+                status.textContent = "Stopping";
+                return;
+            }
+
+            // Normal message handling
             isProcessing = true;
-            // sendBtn.style.display = 'none';
             sendBtn.style.display = 'flex';
             sendBtn.disabled = true;
             status.textContent = "Processing…";
@@ -1944,10 +1975,20 @@
         // -------------------------
         // Enter key handling
         // -------------------------
+        sendBtn.addEventListener('click', send);
+
         input.addEventListener("keydown", (e) => {
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                send();
+
+                // Special handling for :stop command
+                if (input.value.trim() === ":stop") {
+                    // Send stop signal
+                    send();
+                } else {
+                    // Normal message
+                    send();
+                }
             }
         });
 
